@@ -20,7 +20,7 @@ function validateReadOnlySql(raw: string, dialect: "postgresql" | "mysql"): stri
   const sql = raw.trim().replace(/;+\s*$/, "");
   if (!sql || sql.includes(";") || sql.includes("--") || sql.includes("/*") || sql.includes("*/") || sql.length > 12000) throw new Error("The generated query is not a single statement.");
   if (/\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|call|execute|into|outfile|load_file|information_schema|sleep|benchmark)\b/i.test(sql) || /\bfor\s+(update|share)\b|\block\s+in\s+share\s+mode\b/i.test(sql)) throw new Error("Only read-only SELECT queries are allowed.");
-  const ast = parser.astify(sql, { database: dialect });
+  const ast = parser.astify(sql, { database: dialect === "postgresql" ? "Postgresql" : "MySQL" });
   const statements = Array.isArray(ast) ? ast : [ast];
   if (statements.length !== 1 || !statements[0] || (statements[0] as { type?: string }).type !== "select") throw new Error("Only SELECT queries are allowed.");
   const limited = /\blimit\s+(\d+)/i.exec(sql);
