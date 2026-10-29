@@ -1,0 +1,2 @@
+"use client";
+export default function DashboardError({ reset }: { error: Error & { digest?: string }; reset: () => void }) { return <main className="mx-auto max-w-xl rounded-2xl border bg-white p-8 text-center"><h2 className="text-xl font-semibold">We couldn’t load this page</h2><p className="mt-2 text-sm text-slate-600">Your data has not been changed. Try again, and contact support if the issue continues.</p><button onClick={() => reset()} className="mt-5 rounded-xl bg-slate-900 px-4 py-2.5 text-sm font-semibold text-white">Try again</button></main>; }
