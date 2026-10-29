@@ -43,10 +43,12 @@ export async function POST(request: Request) {
     if (plan.activeConnections >= plan.connections) {
       return NextResponse.json({ error: { code: "CONNECTION_LIMIT", message: `Your ${plan.plan} plan allows ${plan.connections} active connection(s).` } }, { status: 403 });
     }
-    const config: ExternalDbConfig = { type: body.type, host: body.host, port: body.port, database: body.database, username: body.username, password: body.password, ssl: body.ssl };
+    const config: ExternalDbConfig = body.type === "mongodb"
+      ? { type: "mongodb", uri: body.uri, database: body.database }
+      : { type: body.type, host: body.host, port: body.port, database: body.database, username: body.username, password: body.password, ssl: body.ssl };
     await testExternalDb(config);
     const schema = await inspectExternalDb(config);
-    if (!schema.tables.length) return NextResponse.json({ error: { code: "EMPTY_SCHEMA", message: "Connected successfully, but no tables were found in the public/default schema." } }, { status: 422 });
+    if (!schema.tables.length) return NextResponse.json({ error: { code: "EMPTY_SCHEMA", message: "Connected successfully, but no tables or collections were found in this database." } }, { status: 422 });
     const created = await DBConnectionModel.create({
       userId: session.user.id, name: body.name, provider: body.type,
       databaseType: body.type, host: body.host, database: body.database,
