@@ -11,6 +11,7 @@ import { decodeExternalDbConfig } from "@/lib/external-database";
 import { toPublicError } from "@/lib/errors";
 import { Client as PgClient } from "pg";
 import mysql from "mysql2/promise";
+import { MongoClient } from "mongodb";
 
 export const runtime = "nodejs";
 const inputSchema = z.object({ question: z.string().trim().min(3).max(2000), connectionId: z.string().regex(/^[a-f\d]{24}$/i) });
@@ -44,6 +45,45 @@ export async function POST(request: Request) {
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return NextResponse.json({ error: { code: "AI_NOT_CONFIGURED", message: "AI query generation is not configured. Add OPENAI_API_KEY to your deployment environment." } }, { status: 503 });
     const config = decodeExternalDbConfig(connection);
+    if (config.type === "mongodb") {
+      const mongo = new MongoClient(config.uri, { serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 });
+      try {
+        await mongo.connect();
+        const db = mongo.db(config.database);
+        const collections = (await db.listCollections({}, { nameOnly: true }).toArray()).map(item => item.name).filter(name => !name.startsWith("system."));
+        const schema = [];
+        for (const name of collections.slice(0, 100)) {
+          const sample = await db.collection(name).findOne({}, { projection: { _id: 0 }, maxTimeMS: 2500 });
+          schema.push({ collection: name, fields: sample && typeof sample === "object" ? Object.keys(sample).slice(0, 80) : [] });
+        }
+        const client = new OpenAI({ apiKey });
+        const completion = await client.chat.completions.create({
+          model: process.env.OPENAI_MODEL || "gpt-4o-mini", temperature: 0, max_tokens: 800,
+          response_format: { type: "json_object" },
+          messages: [
+            { role: "system", content: "Translate the business question to a MongoDB aggregation pipeline. Return JSON only: {\\"collection\\":\\"name\\",\\"pipeline\\":[...],\\"summary\\":\\"short explanation\\"}. Only use the provided collection and field names. The pipeline must be read-only and use only $match, $group, $project, $sort, $limit, $unwind, $count, $addFields, $set, $skip. Never use $out, $merge, $lookup, $function, $where, $accumulator, $unionWith, $documents, $geoNear, $changeStream, $search, or system collections. No more than 8 stages. Do not invent fields." },
+            { role: "user", content: `MongoDB collections and sample fields: ${JSON.stringify(schema)}\nQuestion: ${input.question}` }
+          ]
+        });
+        const text = completion.choices[0]?.message.content;
+        if (!text) throw new Error("AI did not return a pipeline.");
+        const generated = z.object({ collection: z.string().min(1).max(120), pipeline: z.array(z.record(z.unknown())).min(1).max(8), summary: z.string().max(500).default("Query completed.") }).parse(JSON.parse(text));
+        if (!collections.includes(generated.collection)) throw new Error("Unknown collection.");
+        const allowed = new Set(["$match", "$group", "$project", "$sort", "$limit", "$unwind", "$count", "$addFields", "$set", "$skip"]);
+        for (const stage of generated.pipeline) {
+          const keys = Object.keys(stage);
+          if (keys.length !== 1 || !allowed.has(keys[0])) throw new Error("Unsupported aggregation stage.");
+          if (keys[0] === "$limit") stage.$limit = Math.min(100, Math.max(1, Number(stage.$limit) || 100));
+          if (keys[0] === "$skip") stage.$skip = Math.min(10000, Math.max(0, Number(stage.$skip) || 0));
+          if (keys[0] === "$match" && JSON.stringify(stage).match(/\\$where|\\$function|\\$regex/i)) throw new Error("Unsafe match expression.");
+        }
+        if (!generated.pipeline.some(stage => "$limit" in stage)) generated.pipeline.push({ $limit: 100 });
+        const rows = await db.collection(generated.collection).aggregate(generated.pipeline as import("mongodb").Document[], { maxTimeMS: 10000, allowDiskUse: false }).toArray();
+        const columns = [...new Set(rows.flatMap(row => Object.keys(row)))].slice(0, 100);
+        await UsageEventModel.create({ userId: session.user.id, kind: "query_success", createdAt: new Date(), durationMs: Date.now() - started, rowCount: rows.length, metadata: { connectionId: String(connection._id), dialect: "mongodb" } });
+        return NextResponse.json({ summary: generated.summary, sql: JSON.stringify({ collection: generated.collection, pipeline: generated.pipeline }, null, 2), columns, rows: rows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value instanceof Date ? value.toISOString() : typeof value === "object" && value !== null ? JSON.stringify(value) : value]))), rowCount: rows.length, truncated: rows.length >= 100, remaining: Math.max(0, plan.remaining - 1) });
+      } finally { await mongo.close(); }
+    }
     const schema = config.type === "postgres" ? await getSchema(config, "postgresql") : await getSchema(config, "mysql");
     const client = new OpenAI({ apiKey });
     const completion = await client.chat.completions.create({
@@ -71,7 +111,7 @@ export async function POST(request: Request) {
   }
 }
 
-async function getSchema(config: ReturnType<typeof decodeExternalDbConfig>, dialect: "postgresql" | "mysql") {
+async function getSchema(config: Extract<ReturnType<typeof decodeExternalDbConfig>, { type: "postgres" | "mysql" }>, dialect: "postgresql" | "mysql") {
   if (dialect === "postgresql") {
     const client = new PgClient({ host: config.host, port: config.port, database: config.database, user: config.username, password: config.password, ssl: config.ssl ? { rejectUnauthorized: true } : false, connectionTimeoutMillis: 8000, statement_timeout: 8000 });
     try {
@@ -87,7 +127,7 @@ async function getSchema(config: ReturnType<typeof decodeExternalDbConfig>, dial
   } finally { await connection.end(); }
 }
 
-async function executeReadOnly(config: ReturnType<typeof decodeExternalDbConfig>, sql: string): Promise<{ columns: string[]; rows: Record<string, unknown>[] }> {
+async function executeReadOnly(config: Extract<ReturnType<typeof decodeExternalDbConfig>, { type: "postgres" | "mysql" }>, sql: string): Promise<{ columns: string[]; rows: Record<string, unknown>[] }> {
   if (config.type === "postgres") {
     const client = new PgClient({ host: config.host, port: config.port, database: config.database, user: config.username, password: config.password, ssl: config.ssl ? { rejectUnauthorized: true } : false, connectionTimeoutMillis: 8000, statement_timeout: 10000, query_timeout: 10000 });
     try {
