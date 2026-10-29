@@ -44,7 +44,20 @@ Generate distinct secrets for production:
 openssl rand -base64 32
 ```
 
-Set the output as `AUTH_SECRET`. Set `DATABASE_ENCRYPTION_KEY` to a separate high-entropy secret (32+ characters). Keep it stable; changing it without a migration makes previously encrypted credentials unreadable.
+Set the output as `AUTH_SECRET`. Set `CONNECTION_ENCRYPTION_KEY` to a separate high-entropy secret (32+ characters). Keep it stable; changing it without a migration makes previously encrypted credentials unreadable.
+
+### AI analytics database connections
+The connection manager currently supports PostgreSQL and MySQL. In Vercel, configure these additional variables before saving a connection:
+
+- `OPENAI_API_KEY`: an OpenAI API key with access to the configured model.
+- `OPENAI_MODEL`: optional; defaults to `gpt-4o-mini`.
+- `CONNECTION_ENCRYPTION_KEY`: base64-encoded 32-byte key used for AES-256-GCM encryption of saved database credentials. Generate it with:
+
+```bash
+openssl rand -base64 32
+```
+
+Use a dedicated **read-only** database account for analytics. The app validates generated SQL as a single SELECT statement, caps output at 100 rows, and applies query timeouts. Do not use an administrator/root database account. Keep the encryption key stable; rotating it requires re-encrypting stored connection credentials first.
 
 ## 3. Push to GitHub
 
@@ -91,7 +104,7 @@ If a secret was ever committed, rotate it immediately; deleting the file in a la
    - `MONGODB_DATABASE`
    - `OPENAI_API_KEY`
    - `OPENAI_MODEL`
-   - `DATABASE_ENCRYPTION_KEY`
+   - `CONNECTION_ENCRYPTION_KEY`
    - `STRIPE_SECRET_KEY` (when enabling paid plans)
    - `STRIPE_WEBHOOK_SECRET` (when enabling paid plans)
    - `STRIPE_PRICE_PRO` and `STRIPE_PRICE_BUSINESS` (recurring Stripe Price IDs)
@@ -121,7 +134,7 @@ Once Vercel gives you a domain, add `https://YOUR-VERCEL-DOMAIN/api/auth/callbac
 - **Mongo connection timeout**: verify URI, username/password encoding, Atlas network access, and database user permissions.
 - **Build/type errors**: run `npm run typecheck` and `npm run build` locally, then inspect the Vercel build log.
 - **Magic link not delivered**: check SMTP credentials, sender verification, and provider logs.
-- **Credential decryption fails**: ensure `DATABASE_ENCRYPTION_KEY` has not changed between deployments.
+- **Credential decryption fails**: ensure `CONNECTION_ENCRYPTION_KEY` has not changed between deployments.
 
 ## 8. Production checklist
 
@@ -140,7 +153,7 @@ Once Vercel gives you a domain, add `https://YOUR-VERCEL-DOMAIN/api/auth/callbac
 - The app now parses SQL with `node-sql-parser` and rejects non-SELECT AST nodes, unknown tables, system catalogs, CTEs, locking reads and set operations. This is defense-in-depth only: use a dedicated read-only database account for every external connection.
 - External database targets are checked against DNS-resolved private, loopback, link-local and reserved addresses before connection creation and each stored-connection use. Deployments should additionally enforce outbound network egress rules; application DNS checks alone cannot fully prevent DNS rebinding.
 - Never expose database credentials in client-side code, logs, analytics, error traces or AI prompts. Use TLS and least-privilege database accounts.
-- Configure at least one sign-in provider (Google OAuth and/or SMTP email). Configure `AUTH_SECRET`, `MONGODB_URI`, `MONGODB_DATABASE`, `DATABASE_ENCRYPTION_KEY`, and `NEXT_PUBLIC_APP_URL` in each deployment environment. `OPENAI_API_KEY` is required to use AI chat.
+- Configure at least one sign-in provider (Google OAuth and/or SMTP email). Configure `AUTH_SECRET`, `MONGODB_URI`, `MONGODB_DATABASE`, `CONNECTION_ENCRYPTION_KEY`, and `NEXT_PUBLIC_APP_URL` in each deployment environment. `OPENAI_API_KEY` is required to use AI chat.
 - `node-sql-parser` is a new runtime dependency. Run `npm install` to generate a fresh `package-lock.json`, commit that lockfile, then run `npm run typecheck`, `npm run lint`, and `npm run build` in an environment with registry access before deployment.
 
 ## Commercial features and required environment
