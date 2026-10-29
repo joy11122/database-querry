@@ -47,7 +47,7 @@ openssl rand -base64 32
 Set the output as `AUTH_SECRET`. Set `CONNECTION_ENCRYPTION_KEY` to a separate high-entropy secret (32+ characters). Keep it stable; changing it without a migration makes previously encrypted credentials unreadable.
 
 ### AI analytics database connections
-The connection manager currently supports PostgreSQL and MySQL. In Vercel, configure these additional variables before saving a connection:
+The connection manager supports MongoDB Atlas, PostgreSQL and MySQL. For MongoDB Atlas, choose **MongoDB Atlas** in the connection form, copy the SRV URI from Atlas → Cluster → Connect → Drivers, enter the database name (for example `test`), and keep the URI secret. Create a dedicated database user with read-only permissions and configure Atlas Network Access for the deployment. MongoDB analytics uses a constrained, read-only aggregation pipeline. In Vercel, configure these additional variables before saving a connection:
 
 - `OPENAI_API_KEY`: an OpenAI API key with access to the configured model.
 - `OPENAI_MODEL`: optional; defaults to `gpt-4o-mini`.
