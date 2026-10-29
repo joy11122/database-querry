@@ -61,7 +61,7 @@ export async function POST(request: Request) {
           model: process.env.OPENAI_MODEL || "gpt-4o-mini", temperature: 0, max_tokens: 800,
           response_format: { type: "json_object" },
           messages: [
-            { role: "system", content: "Translate the business question to a MongoDB aggregation pipeline. Return JSON only: {\\"collection\\":\\"name\\",\\"pipeline\\":[...],\\"summary\\":\\"short explanation\\"}. Only use the provided collection and field names. The pipeline must be read-only and use only $match, $group, $project, $sort, $limit, $unwind, $count, $addFields, $set, $skip. Never use $out, $merge, $lookup, $function, $where, $accumulator, $unionWith, $documents, $geoNear, $changeStream, $search, or system collections. No more than 8 stages. Do not invent fields." },
+            { role: "system", content: `Translate the business question to a MongoDB aggregation pipeline. Return JSON only: {"collection":"name","pipeline":[...],"summary":"short explanation"}. Only use the provided collection and field names. The pipeline must be read-only and use only $match, $group, $project, $sort, $limit, $unwind, $count, $addFields, $set, $skip. Never use $out, $merge, $lookup, $function, $where, $accumulator, $unionWith, $documents, $geoNear, $changeStream, $search, or system collections. No more than 8 stages. Do not invent fields.` },
             { role: "user", content: `MongoDB collections and sample fields: ${JSON.stringify(schema)}\nQuestion: ${input.question}` }
           ]
         });
