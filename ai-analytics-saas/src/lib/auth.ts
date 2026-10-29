@@ -1,11 +1,12 @@
 import NextAuth from "next-auth";
+import type { Provider } from "next-auth/providers";
 import Google from "next-auth/providers/google";
 import Nodemailer from "next-auth/providers/nodemailer";
 import { MongoDBAdapter } from "@auth/mongodb-adapter";
 import { env } from "@/config/env";
 import { authMongoClientPromise } from "@/lib/mongodb";
 
-const providers = [];
+const providers: Provider[] = [];
 
 if (env.GOOGLE_CLIENT_ID && env.GOOGLE_CLIENT_SECRET) {
   providers.push(
