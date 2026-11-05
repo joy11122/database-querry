@@ -33,9 +33,13 @@ export async function POST(request: Request) {
   const session = await auth();
   if (!session?.user?.id) return NextResponse.json({ error: { code: "UNAUTHORIZED", message: "Please sign in." } }, { status: 401 });
   const started = Date.now();
+  let stage = "parse-request";
+  let databaseType: string | undefined;
   try {
     const input = inputSchema.parse(await request.json());
+    stage = "connect-app-database";
     await connectMongoose();
+    stage = "load-plan-and-connection";
     const [plan, connection] = await Promise.all([
       getUserPlan(session.user.id),
       DBConnectionModel.findOne({ _id: input.connectionId, userId: session.user.id, isActive: true }).exec(),
@@ -44,18 +48,23 @@ export async function POST(request: Request) {
     if (plan.remaining <= 0) return NextResponse.json({ error: { code: "USAGE_LIMIT", message: "Your monthly AI question limit has been reached." } }, { status: 429 });
     const apiKey = process.env.OPENAI_API_KEY;
     if (!apiKey) return NextResponse.json({ error: { code: "AI_NOT_CONFIGURED", message: "AI query generation is not configured. Add OPENAI_API_KEY to your deployment environment." } }, { status: 503 });
+    stage = "decrypt-connection";
     const config = decodeExternalDbConfig(connection);
+    databaseType = config.type;
     if (config.type === "mongodb") {
       const mongo = new MongoClient(config.uri, { serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 });
       try {
+        stage = "connect-external-mongodb";
         await mongo.connect();
         const db = mongo.db(config.database);
+        stage = "inspect-mongodb-collections";
         const collections = (await db.listCollections({}, { nameOnly: true }).toArray()).map(item => item.name).filter(name => !name.startsWith("system."));
         const schema = [];
         for (const name of collections.slice(0, 100)) {
           const sample = await db.collection(name).findOne({}, { projection: { _id: 0 }, maxTimeMS: 2500 });
           schema.push({ collection: name, fields: sample && typeof sample === "object" ? Object.keys(sample).slice(0, 80) : [] });
         }
+        stage = "generate-mongodb-aggregation";
         const client = new OpenAI({ apiKey });
         const completion = await client.chat.completions.create({
           model: process.env.OPENAI_MODEL || "gpt-4o-mini", temperature: 0, max_tokens: 800,
@@ -65,6 +74,7 @@ export async function POST(request: Request) {
             { role: "user", content: `MongoDB collections and sample fields: ${JSON.stringify(schema)}\nQuestion: ${input.question}` }
           ]
         });
+        stage = "validate-mongodb-aggregation";
         const text = completion.choices[0]?.message.content;
         if (!text) throw new Error("AI did not return a pipeline.");
         const generated = z.object({ collection: z.string().min(1).max(120), pipeline: z.array(z.record(z.unknown())).min(1).max(8), summary: z.string().max(500).default("Query completed.") }).parse(JSON.parse(text));
@@ -78,13 +88,17 @@ export async function POST(request: Request) {
           if (keys[0] === "$match" && JSON.stringify(stage).match(/\\$where|\\$function|\\$regex/i)) throw new Error("Unsafe match expression.");
         }
         if (!generated.pipeline.some(stage => "$limit" in stage)) generated.pipeline.push({ $limit: 100 });
+        stage = "execute-mongodb-aggregation";
         const rows = await db.collection(generated.collection).aggregate(generated.pipeline as import("mongodb").Document[], { maxTimeMS: 10000, allowDiskUse: false }).toArray();
         const columns = [...new Set(rows.flatMap(row => Object.keys(row)))].slice(0, 100);
+        stage = "save-query-usage";
         await UsageEventModel.create({ userId: session.user.id, kind: "query_success", createdAt: new Date(), durationMs: Date.now() - started, rowCount: rows.length, metadata: { connectionId: String(connection._id), dialect: "mongodb" } });
         return NextResponse.json({ summary: generated.summary, sql: JSON.stringify({ collection: generated.collection, pipeline: generated.pipeline }, null, 2), columns, rows: rows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value instanceof Date ? value.toISOString() : typeof value === "object" && value !== null ? JSON.stringify(value) : value]))), rowCount: rows.length, truncated: rows.length >= 100, remaining: Math.max(0, plan.remaining - 1) });
       } finally { await mongo.close(); }
     }
+    stage = "inspect-sql-schema";
     const schema = config.type === "postgres" ? await getSchema(config, "postgresql") : await getSchema(config, "mysql");
+    stage = "generate-sql-query";
     const client = new OpenAI({ apiKey });
     const completion = await client.chat.completions.create({
       model: process.env.OPENAI_MODEL || "gpt-4o-mini",
@@ -96,18 +110,31 @@ export async function POST(request: Request) {
       ],
       response_format: { type: "json_object" },
     });
+    stage = "validate-generated-sql";
     const content = completion.choices[0]?.message.content;
     if (!content) throw new Error("AI did not return a query.");
     const generated = z.object({ sql: z.string().min(1).max(12000), summary: z.string().max(500).default("Query completed.") }).parse(JSON.parse(content));
     const sql = validateReadOnlySql(generated.sql, config.type === "postgres" ? "postgresql" : "mysql");
+    stage = "execute-sql-query";
     const result = await executeReadOnly(config, sql);
+    stage = "save-query-usage";
     await UsageEventModel.create({ userId: session.user.id, kind: "query_success", createdAt: new Date(), durationMs: Date.now() - started, rowCount: result.rows.length, metadata: { connectionId: String(connection._id), dialect: config.type } });
     return NextResponse.json({ summary: generated.summary, sql, columns: result.columns, rows: result.rows, rowCount: result.rows.length, truncated: result.rows.length >= 100, remaining: Math.max(0, plan.remaining - 1) });
   } catch (error) {
     const safe = toPublicError(error);
     if (safe.statusCode === 400) return NextResponse.json({ error: { code: safe.code, message: "Please enter a clear question and try again." } }, { status: 400 });
-    console.error("Analytics query failed", error instanceof Error ? error.name : "unknown error");
-    return NextResponse.json({ error: { code: "QUERY_FAILED", message: "The analytics query could not be completed. Check your connection and question, then try again." } }, { status: 400 });
+    const diagnostic = error && typeof error === "object" ? error as { name?: unknown; code?: unknown; codeName?: unknown; status?: unknown; type?: unknown } : {};
+    console.error("Analytics query failed", {
+      stage,
+      databaseType,
+      errorName: typeof diagnostic.name === "string" ? diagnostic.name : "UnknownError",
+      errorCode: typeof diagnostic.code === "string" || typeof diagnostic.code === "number" ? diagnostic.code : undefined,
+      codeName: typeof diagnostic.codeName === "string" ? diagnostic.codeName : undefined,
+      httpStatus: typeof diagnostic.status === "number" ? diagnostic.status : undefined,
+      errorType: typeof diagnostic.type === "string" ? diagnostic.type : undefined,
+      durationMs: Date.now() - started,
+    });
+    return NextResponse.json({ error: { code: "QUERY_FAILED", message: "The analytics query could not be completed. Check your connection and question, then try again." } }, { status: safe.statusCode >= 500 ? 500 : 400 });
   }
 }
 
