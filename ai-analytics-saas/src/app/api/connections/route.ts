@@ -16,13 +16,18 @@ const connectionSchema = z.discriminatedUnion("type", [
 
 
 function getSafeDatabaseDiagnostic(error: unknown) {
-  if (!error || typeof error !== "object") return { name: "UnknownError" };
-  const value = error as { name?: unknown; code?: unknown; codeName?: unknown };
-  return {
-    name: typeof value.name === "string" ? value.name : "UnknownError",
-    code: typeof value.code === "string" || typeof value.code === "number" ? value.code : undefined,
-    codeName: typeof value.codeName === "string" ? value.codeName : undefined,
+  const readError = (value: unknown) => {
+    if (!value || typeof value !== "object") return undefined;
+    const item = value as { name?: unknown; code?: unknown; codeName?: unknown };
+    return {
+      name: typeof item.name === "string" ? item.name : "UnknownError",
+      code: typeof item.code === "string" || typeof item.code === "number" ? item.code : undefined,
+      codeName: typeof item.codeName === "string" ? item.codeName : undefined,
+    };
   };
+  if (!error || typeof error !== "object") return { error: { name: "UnknownError" } };
+  const item = error as { cause?: unknown };
+  return { error: readError(error), cause: readError(item.cause) };
 }
 
 export async function GET() {
