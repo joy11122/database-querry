@@ -59,10 +59,49 @@ export async function POST(request: Request) {
         const db = mongo.db(config.database);
         stage = "inspect-mongodb-collections";
         const collections = (await db.listCollections({}, { nameOnly: true }).toArray()).map(item => item.name).filter(name => !name.startsWith("system."));
+        // Inspect several documents per collection. A single document is not a reliable
+        // schema source because optional fields may be absent from the first record.
         const schema = [];
         for (const name of collections.slice(0, 100)) {
-          const sample = await db.collection(name).findOne({}, { projection: { _id: 0 }, maxTimeMS: 2500 });
-          schema.push({ collection: name, fields: sample && typeof sample === "object" ? Object.keys(sample).slice(0, 80) : [] });
+          const samples = await db.collection(name)
+            .find({}, { projection: { _id: 0 } })
+            .limit(8)
+            .maxTimeMS(3000)
+            .toArray();
+          const fields = new Map<string, Set<string>>();
+          const addFields = (value: unknown, prefix = "", depth = 0) => {
+            if (!value || typeof value !== "object" || value instanceof Date || depth > 3) return;
+            const entries = Array.isArray(value)
+              ? value.slice(0, 3).map((item, index) => [String(index), item] as const)
+              : Object.entries(value as Record<string, unknown>);
+            for (const [key, nested] of entries) {
+              const field = prefix ? `${prefix}.${key}` : key;
+              const type = nested === null ? "null"
+                : nested instanceof Date ? "date"
+                : Array.isArray(nested) ? "array"
+                : typeof nested === "object" ? "object"
+                : typeof nested;
+              const types = fields.get(field) ?? new Set<string>();
+              types.add(type);
+              fields.set(field, types);
+              if (nested && typeof nested === "object" && !(nested instanceof Date)) {
+                if (Array.isArray(nested)) {
+                  for (const item of nested.slice(0, 3)) addFields(item, field, depth + 1);
+                } else {
+                  addFields(nested, field, depth + 1);
+                }
+              }
+            }
+          };
+          for (const sample of samples) addFields(sample);
+          schema.push({
+            collection: name,
+            sampleDocuments: samples.length,
+            fields: [...fields.entries()].slice(0, 160).map(([field, types]) => ({
+              name: field,
+              types: [...types],
+            })),
+          });
         }
         stage = "generate-mongodb-aggregation";
         const client = new OpenAI({ apiKey });
@@ -70,7 +109,7 @@ export async function POST(request: Request) {
           model: process.env.OPENAI_MODEL || "gpt-4o-mini", temperature: 0, max_tokens: 800,
           response_format: { type: "json_object" },
           messages: [
-            { role: "system", content: `Translate the business question to a MongoDB aggregation pipeline. Return JSON only: {"collection":"name","pipeline":[...],"summary":"short explanation"}. Only use the provided collection and field names. The pipeline must be read-only and use only $match, $group, $project, $sort, $limit, $unwind, $count, $addFields, $set, $skip. Never use $out, $merge, $lookup, $function, $where, $accumulator, $unionWith, $documents, $geoNear, $changeStream, $search, or system collections. No more than 8 stages. Do not invent fields.` },
+            { role: "system", content: `Translate the business question into a MongoDB aggregation pipeline. Return JSON only: {"collection":"name","pipeline":[...],"summary":"short explanation"}. Use only the provided collection and field names. Interpret natural-language intent carefully: for "how many" questions use a count aggregation; for "available" or "active" questions, apply a status/availability filter only when the supplied schema contains a clearly relevant field (such as status, isActive, isAvailable, available, enabled, or stock). Do not guess status values or field names; inspect the supplied field names and types. Match plural business nouns such as services/customers/products to the most relevant collection name. If the schema does not support the requested meaning, do not fabricate a result; return a valid read-only aggregation and explain the limitation in summary. The pipeline must be read-only and use only $match, $group, $project, $sort, $limit, $unwind, $count, $addFields, $set, $skip. Never use $out, $merge, $lookup, $function, $where, $accumulator, $unionWith, $documents, $geoNear, $changeStream, $search, or system collections. No more than 8 stages. Do not invent fields.` },
             { role: "user", content: `MongoDB collections and sample fields: ${JSON.stringify(schema)}\nQuestion: ${input.question}` }
           ]
         });
