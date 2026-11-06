@@ -20,7 +20,7 @@ const parser = new Parser();
 function validateReadOnlySql(raw: string, dialect: "postgresql" | "mysql"): string {
   const sql = raw.trim().replace(/;+\s*$/, "");
   if (!sql || sql.includes(";") || sql.includes("--") || sql.includes("/*") || sql.includes("*/") || sql.length > 12000) throw new Error("The generated query is not a single statement.");
-  if (/\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|call|execute|into|outfile|load_file|information_schema|sleep|benchmark)\b/i.test(sql) || /\bfor\s+(update|share)\b|\block\s+in\s+share\s+mode\b/i.test(sql)) throw new Error("Only read-only SELECT queries are allowed.");
+  if (/\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|call|execute|into|outfile|load_file|information_schema|sleep|benchmark)\b/i.test(sql) || /\b(pg_sleep|pg_read_file|pg_ls_dir|lo_import|lo_export|load_file|sleep|benchmark|get_lock|release_lock)\s*\(/i.test(sql) || /\bfor\s+(update|share)\b|\block\s+in\s+share\s+mode\b/i.test(sql)) throw new Error("Only read-only SELECT queries are allowed.");
   const ast = parser.astify(sql, { database: dialect === "postgresql" ? "Postgresql" : "MySQL" });
   const statements = Array.isArray(ast) ? ast : [ast];
   if (statements.length !== 1 || !statements[0] || (statements[0] as { type?: string }).type !== "select") throw new Error("Only SELECT queries are allowed.");
@@ -144,7 +144,7 @@ export async function POST(request: Request) {
       temperature: 0,
       max_tokens: 700,
       messages: [
-        { role: "system", content: "You convert business questions into ONE read-only SQL SELECT query. Return JSON only: {\"sql\":\"...\",\"summary\":\"short plain-English explanation\"}. Use only tables and columns listed in the schema. Never invent columns. Never use comments, multiple statements, DDL, DML, system catalogs, or write operations. Do not include a semicolon. The server applies a 100-row cap." },
+        { role: "system", content: "You convert natural-language business questions into ONE read-only SQL SELECT query for the specified database dialect. Return JSON only: {\"sql\":\"...\",\"summary\":\"short plain-English explanation\"}. Use only the exact tables and columns listed in the supplied schema; never invent or rename identifiers. Match business nouns to the closest table in the schema. For "how many" questions, return a COUNT aggregate rather than listing rows. For "available", "active", "enabled", "in stock", or "inactive" questions, use a clearly relevant status/availability column only if it exists in the schema (for example status, is_active, isavailable, available, enabled, or stock); do not assume status values such as active/available/1 unless the schema or question establishes them. If the schema cannot support the requested meaning, do not fabricate a filter or result; return the safest relevant SELECT and explain the limitation in summary. Use dialect-compatible syntax (PostgreSQL or MySQL). Never use comments, multiple statements, DDL, DML, system catalogs, file/network functions, sleep/benchmark/lock functions, or write operations. Do not include a semicolon. The server applies a 100-row cap." },
         { role: "user", content: `Database dialect: ${config.type}. Schema JSON: ${JSON.stringify(schema)}\nQuestion: ${input.question}` },
       ],
       response_format: { type: "json_object" },
