@@ -17,13 +17,20 @@ export const runtime = "nodejs";
 const inputSchema = z.object({ question: z.string().trim().min(3).max(2000), connectionId: z.string().regex(/^[a-f\d]{24}$/i) });
 const parser = new Parser();
 
-function validateReadOnlySql(raw: string, dialect: "postgresql" | "mysql"): string {
+function validateReadOnlySql(raw: string, dialect: "postgresql" | "mysql", allowedTables?: Set<string>): string {
   const sql = raw.trim().replace(/;+\s*$/, "");
   if (!sql || sql.includes(";") || sql.includes("--") || sql.includes("/*") || sql.includes("*/") || sql.length > 12000) throw new Error("The generated query is not a single statement.");
   if (/\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|call|execute|into|outfile|load_file|information_schema|sleep|benchmark)\b/i.test(sql) || /\b(pg_sleep|pg_read_file|pg_ls_dir|lo_import|lo_export|load_file|sleep|benchmark|get_lock|release_lock)\s*\(/i.test(sql) || /\bfor\s+(update|share)\b|\block\s+in\s+share\s+mode\b/i.test(sql)) throw new Error("Only read-only SELECT queries are allowed.");
   const ast = parser.astify(sql, { database: dialect === "postgresql" ? "Postgresql" : "MySQL" });
   const statements = Array.isArray(ast) ? ast : [ast];
   if (statements.length !== 1 || !statements[0] || (statements[0] as { type?: string }).type !== "select") throw new Error("Only SELECT queries are allowed.");
+  if (allowedTables) {
+    const referencedTables = parser.tableList(sql, { database: dialect === "postgresql" ? "Postgresql" : "MySQL" });
+    for (const reference of referencedTables) {
+      const tableName = reference.split("::").at(-1)?.replace(/^[`"\\[]|[`"\\]]$/g, "");
+      if (!tableName || !allowedTables.has(tableName.toLowerCase())) throw new Error("Query references a table outside the connected database schema.");
+    }
+  }
   const limited = /\blimit\s+(\d+)/i.exec(sql);
   if (limited) return sql.replace(/\blimit\s+\d+/i, `LIMIT ${Math.min(100, Math.max(1, Number(limited[1])))}`);
   return `${sql} LIMIT 100`;
@@ -179,7 +186,7 @@ export async function POST(request: Request) {
     const simpleSql = buildSimpleSqlQuery(input.question, schema, config.type === "postgres" ? "postgresql" : "mysql");
     if (simpleSql) {
       stage = "execute-simple-sql-query";
-      const safeSql = validateReadOnlySql(simpleSql.sql, config.type === "postgres" ? "postgresql" : "mysql");
+      const safeSql = validateReadOnlySql(simpleSql.sql, config.type === "postgres" ? "postgresql" : "mysql", new Set(schema.map(row => String(row.table_name).toLowerCase())));
       const result = await executeReadOnly(config, safeSql);
       stage = "save-query-usage";
       await UsageEventModel.create({ userId: session.user.id, kind: "query_success", createdAt: new Date(), durationMs: Date.now() - started, rowCount: result.rows.length, metadata: { connectionId: String(connection._id), dialect: config.type, queryMode: "deterministic" } });
@@ -207,7 +214,7 @@ export async function POST(request: Request) {
     const content = completion.choices[0]?.message.content;
     if (!content) throw new Error("AI did not return a query.");
     const generated = z.object({ sql: z.string().min(1).max(12000), summary: z.string().max(500).default("Query completed.") }).parse(JSON.parse(content));
-    const sql = validateReadOnlySql(generated.sql, config.type === "postgres" ? "postgresql" : "mysql");
+    const sql = validateReadOnlySql(generated.sql, config.type === "postgres" ? "postgresql" : "mysql", new Set(schema.map(row => String(row.table_name).toLowerCase())));
     stage = "execute-sql-query";
     const result = await executeReadOnly(config, sql);
     stage = "save-query-usage";
