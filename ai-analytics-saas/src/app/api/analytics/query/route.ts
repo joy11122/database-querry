@@ -225,7 +225,7 @@ function normalizeWords(value: string): string[] {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
-    .split(/\\s+/)
+    .split(/\s+/)
     .filter(Boolean);
 }
 
@@ -235,9 +235,9 @@ function buildSimpleMongoQuery(
   collections: string[],
 ): SimpleMongoPlan | null {
   const normalized = question.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  const words = new Set(normalized.split(/\\s+/).filter(Boolean));
-  const isCount = /\\b(how many|count|number of|total number of)\\b/.test(normalized);
-  const isList = /\\b(show|list|get|find|display|fetch|what are|which)\\b/.test(normalized);
+  const words = new Set(normalized.split(/\s+/).filter(Boolean));
+  const isCount = /\b(how many|count|number of|total number of)\b/.test(normalized);
+  const isList = /\b(show|list|get|find|display|fetch|what are|which)\b/.test(normalized);
   if (!isCount && !isList) return null;
 
   const ranked = schema
@@ -255,7 +255,7 @@ function buildSimpleMongoQuery(
   if (!ranked.length || (ranked.length > 1 && ranked[0].score === ranked[1].score)) return null;
 
   const selected = ranked[0].item;
-  const wantsAvailability = /\\b(available|availability|active|enabled|in stock)\\b/.test(normalized);
+  const wantsAvailability = /\b(available|availability|active|enabled|in stock)\b/.test(normalized);
   const pipeline: import("mongodb").Document[] = [];
   if (wantsAvailability) {
     const booleanAvailabilityField = selected.fields.find(field =>
@@ -277,7 +277,7 @@ function buildSimpleMongoQuery(
     };
   }
 
-  const requestedLimit = /\\b(?:top|first|last|show|list|get)\\s+(\\d{1,3})\\b/.exec(normalized);
+  const requestedLimit = /\b(?:top|first|last|show|list|get)\s+(\d{1,3})\b/.exec(normalized);
   const limit = requestedLimit ? Math.min(100, Math.max(1, Number(requestedLimit[1]))) : 20;
   pipeline.push({ $limit: limit });
   return {
