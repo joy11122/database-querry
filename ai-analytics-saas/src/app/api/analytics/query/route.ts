@@ -21,7 +21,7 @@ const parser = new Parser();
 
 function validateReadOnlySql(raw: string, dialect: "postgresql" | "mysql", schema?: SqlSchemaRow[], currentDatabase?: string): string {
   const sql = raw.trim().replace(/;+\\s*$/, "");
-  if (!sql || sql.includes(";") || sql.includes("--") || sql.includes("/*") || sql.includes("*/") || sql.length > 12000) throw new Error("The generated query is not a single statement.");
+  if (!/^\\s*select\\b/i.test(sql) || sql.includes(";") || sql.includes("--") || sql.includes("/*") || sql.includes("*/") || sql.length > 12000) throw new Error("The generated query is not a single statement.");
   if (/\\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|call|execute|into|outfile|load_file|information_schema|pg_catalog|mysql\\.user|sleep|benchmark)\\b/i.test(sql) || /\\b(pg_sleep|pg_read_file|pg_ls_dir|lo_import|lo_export|load_file|sleep|benchmark|get_lock|release_lock)\\s*\\(/i.test(sql) || /\\bfor\\s+(update|share)\\b|\\block\\s+in\\s+share\\s+mode\\b/i.test(sql)) throw new Error("Only read-only SELECT queries are allowed.");
   const dialectName = dialect === "postgresql" ? "Postgresql" : "MySQL";
   const ast = parser.astify(sql, { database: dialectName });
@@ -56,7 +56,8 @@ function validateReadOnlySql(raw: string, dialect: "postgresql" | "mysql", schem
     if (!allowed.size) throw new Error("Query must reference an inspected table.");
     const referencedColumns = parser.columnList(sql, { database: dialectName });
     for (const reference of referencedColumns) {
-      const columnName = unquoteSqlIdentifier(reference.split("::").at(-1) ?? "").toLowerCase();
+      const rawColumn = reference.split("::").at(-1) ?? "";
+      const columnName = unquoteSqlIdentifier(rawColumn.split(".").at(-1) ?? "").toLowerCase();
       if (!columnName || columnName === "*" || columnName === "1") continue;
       if (![...allowed].some(table => tables.get(table)?.has(columnName))) {
         throw new Error("Query references a column outside the inspected database schema.");
