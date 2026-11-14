@@ -1,8 +1,52 @@
 import { connectMongoose } from "@/lib/mongoose";
 import { SubscriptionModel } from "@/db/models/subscription.model";
 import { UsageEventModel } from "@/db/models/usage-event.model";
+import { UsageCounterModel } from "@/db/models/usage-counter.model";
 import { DBConnectionModel } from "@/db/models/db-connection.model";
 import { PLANS, type PlanId } from "@/services/billing/plans";
+
+function getCurrentMonth() {
+  const now = new Date();
+  const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
+  return { monthStart, monthKey: monthStart.toISOString().slice(0, 7) };
+}
+
+export async function reserveQueryUsage(userId: string, limit: number): Promise<{ monthKey: string } | null> {
+  await connectMongoose();
+  const { monthStart, monthKey } = getCurrentMonth();
+  const filter = { userId, monthKey, count: { $lt: limit } };
+  const updated = await UsageCounterModel.findOneAndUpdate(filter, { $inc: { count: 1 } }, { new: true }).lean().exec();
+  if (updated) return { monthKey };
+
+  const existing = await UsageCounterModel.findOne({ userId, monthKey }).lean().exec();
+  if (existing) return null;
+
+  // Seed the counter with legacy successful events so existing users keep their
+  // current month's usage when this atomic counter is introduced.
+  const legacyUsed = await UsageEventModel.countDocuments({
+    userId, kind: "query_success", createdAt: { $gte: monthStart },
+  }).exec();
+  if (legacyUsed >= limit) return null;
+
+  try {
+    await UsageCounterModel.create({ userId, monthKey, count: legacyUsed + 1 });
+    return { monthKey };
+  } catch (error) {
+    // Another request may have initialized this user's monthly counter first.
+    const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+    if (code !== 11000) throw error;
+    const raced = await UsageCounterModel.findOneAndUpdate(filter, { $inc: { count: 1 } }, { new: true }).lean().exec();
+    return raced ? { monthKey } : null;
+  }
+}
+
+export async function releaseQueryUsage(userId: string, monthKey: string): Promise<void> {
+  await connectMongoose();
+  await UsageCounterModel.updateOne(
+    { userId, monthKey, count: { $gt: 0 } },
+    { $inc: { count: -1 } },
+  ).exec();
+}
 
 export async function getUserPlan(userId: string) {
   await connectMongoose();
@@ -15,18 +59,16 @@ export async function getUserPlan(userId: string) {
     ? subscription.plan
     : "free") as PlanId;
   const current = PLANS[plan];
-  const monthStart = new Date();
-  monthStart.setUTCDate(1);
-  monthStart.setUTCHours(0, 0, 0, 0);
+  const { monthStart, monthKey } = getCurrentMonth();
 
-  const [used, connections] = await Promise.all([
+  const [counter, legacyUsed, connections] = await Promise.all([
+    UsageCounterModel.findOne({ userId, monthKey }).lean().exec(),
     UsageEventModel.countDocuments({
-      userId,
-      kind: "query_success",
-      createdAt: { $gte: monthStart },
+      userId, kind: "query_success", createdAt: { $gte: monthStart },
     }).exec(),
     DBConnectionModel.countDocuments({ userId, isActive: true }).exec(),
   ]);
+  const used = counter?.count ?? legacyUsed;
 
   return {
     plan,
