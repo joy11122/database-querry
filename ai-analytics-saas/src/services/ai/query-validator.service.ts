@@ -140,6 +140,22 @@ export function validateMongoAnalyticsQuery(
         }
       }
     }
+    if (entries[0][0] === "$sort") {
+      for (const field of Object.keys(entries[0][1] as Record<string, unknown>)) {
+        if (!knownFields.has(field.split(".")[0])) throw new Error("$sort references an unknown schema field.");
+      }
+    }
+    if (entries[0][0] === "$project") {
+      for (const [field, projection] of Object.entries(entries[0][1] as Record<string, unknown>)) {
+        if ((projection === 0 || projection === 1) && !knownFields.has(field.split(".")[0])) {
+          throw new Error("$project references an unknown schema field.");
+        }
+      }
+    }
+    if (entries[0][0] === "$unset") {
+      const fields = typeof entries[0][1] === "string" ? [entries[0][1]] : entries[0][1] as string[];
+      if (fields.some(field => !knownFields.has(field.split(".")[0]))) throw new Error("$unset references an unknown schema field.");
+    }
     return stage as Record<string, unknown>;
   });
 
