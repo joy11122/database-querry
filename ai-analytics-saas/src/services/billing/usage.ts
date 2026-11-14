@@ -2,6 +2,7 @@ import { connectMongoose } from "@/lib/mongoose";
 import { SubscriptionModel } from "@/db/models/subscription.model";
 import { UsageEventModel } from "@/db/models/usage-event.model";
 import { UsageCounterModel } from "@/db/models/usage-counter.model";
+import { ConnectionCounterModel } from "@/db/models/connection-counter.model";
 import { DBConnectionModel } from "@/db/models/db-connection.model";
 import { PLANS, type PlanId } from "@/services/billing/plans";
 
@@ -48,6 +49,31 @@ export async function releaseQueryUsage(userId: string, monthKey: string): Promi
   ).exec();
 }
 
+export async function reserveConnectionSlot(userId: string, limit: number): Promise<boolean> {
+  await connectMongoose();
+  const filter = { userId, count: { $lt: limit } };
+  const updated = await ConnectionCounterModel.findOneAndUpdate(filter, { $inc: { count: 1 } }, { new: true }).lean().exec();
+  if (updated) return true;
+  const existing = await ConnectionCounterModel.findOne({ userId }).lean().exec();
+  if (existing) return false;
+  const legacyCount = await DBConnectionModel.countDocuments({ userId, isActive: true }).exec();
+  if (legacyCount >= limit) return false;
+  try {
+    await ConnectionCounterModel.create({ userId, count: legacyCount + 1 });
+    return true;
+  } catch (error) {
+    const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+    if (code !== 11000) throw error;
+    const raced = await ConnectionCounterModel.findOneAndUpdate(filter, { $inc: { count: 1 } }, { new: true }).lean().exec();
+    return Boolean(raced);
+  }
+}
+
+export async function releaseConnectionSlot(userId: string): Promise<void> {
+  await connectMongoose();
+  await ConnectionCounterModel.updateOne({ userId, count: { $gt: 0 } }, { $inc: { count: -1 } }).exec();
+}
+
 export async function getUserPlan(userId: string) {
   await connectMongoose();
   const subscription = await SubscriptionModel.findOne({
@@ -61,14 +87,17 @@ export async function getUserPlan(userId: string) {
   const current = PLANS[plan];
   const { monthStart, monthKey } = getCurrentMonth();
 
-  const [counter, legacyUsed, connections] = await Promise.all([
+  const [counter, legacyUsed, connectionCounter, legacyConnections] = await Promise.all([
     UsageCounterModel.findOne({ userId, monthKey }).lean().exec(),
     UsageEventModel.countDocuments({
       userId, kind: "query_success", createdAt: { $gte: monthStart },
     }).exec(),
+    ConnectionCounterModel.findOne({ userId }).lean().exec(),
+    ConnectionCounterModel.findOne({ userId }).lean().exec(),
     DBConnectionModel.countDocuments({ userId, isActive: true }).exec(),
   ]);
   const used = counter?.count ?? legacyUsed;
+  const connections = connectionCounter?.count ?? legacyConnections;
 
   return {
     plan,
