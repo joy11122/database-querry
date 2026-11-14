@@ -9,7 +9,8 @@ const envSchema = z.object({
   AUTH_EMAIL_SERVER: z.string().optional(),
   AUTH_EMAIL_FROM: z.string().email().optional(),
   MONGODB_URI: z.string().min(1).optional(),
-  MONGODB_DATABASE: z.string().min(1).optional(),
+  MONGODB_DATABASE: z.string().min(1).refine(value => !/[./\\"$*<>:|?\\0]/.test(value), "MONGODB_DATABASE contains an invalid MongoDB database-name character").optional(),
+  OUTBOUND_DB_ALLOWED_HOSTS: z.string().optional(),
   ADMIN_EMAILS: z.string().optional(),
 });
 
@@ -23,5 +24,6 @@ export const env = envSchema.parse({
   AUTH_EMAIL_FROM: process.env.AUTH_EMAIL_FROM,
   MONGODB_URI: process.env.MONGODB_URI,
   MONGODB_DATABASE: process.env.MONGODB_DATABASE,
+  OUTBOUND_DB_ALLOWED_HOSTS: process.env.OUTBOUND_DB_ALLOWED_HOSTS,
   ADMIN_EMAILS: process.env.ADMIN_EMAILS,
 });
