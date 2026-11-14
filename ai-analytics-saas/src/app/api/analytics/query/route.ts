@@ -7,7 +7,7 @@ import { connectMongoose } from "@/lib/mongoose";
 import { DBConnectionModel } from "@/db/models/db-connection.model";
 import { UsageEventModel } from "@/db/models/usage-event.model";
 import { getUserPlan } from "@/services/billing/usage";
-import { decodeExternalDbConfig } from "@/lib/external-database";
+import { assertSafeExternalHost, decodeExternalDbConfig } from "@/lib/external-database";
 import { toPublicError } from "@/lib/errors";
 import { Client as PgClient } from "pg";
 import mysql from "mysql2/promise";
@@ -51,6 +51,7 @@ export async function POST(request: Request) {
     const config = decodeExternalDbConfig(connection);
     databaseType = config.type;
     if (config.type === "mongodb") {
+      await assertSafeExternalHost(new URL(config.uri).hostname);
       const mongo = new MongoClient(config.uri, { serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 });
       try {
         stage = "connect-external-mongodb";
@@ -172,6 +173,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ summary: generated.summary, sql: JSON.stringify({ collection: generated.collection, pipeline: generated.pipeline }, null, 2), columns, rows: rows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value instanceof Date ? value.toISOString() : typeof value === "object" && value !== null ? JSON.stringify(value) : value]))), rowCount: rows.length, truncated: rows.length >= 100, remaining: Math.max(0, plan.remaining - 1) });
       } finally { await mongo.close(); }
     }
+    await assertSafeExternalHost(config.host);
     stage = "inspect-sql-schema";
     const schema = config.type === "postgres" ? await getSchema(config, "postgresql") : await getSchema(config, "mysql");
     const simpleSql = buildSimpleSqlQuery(input.question, schema, config.type === "postgres" ? "postgresql" : "mysql");
