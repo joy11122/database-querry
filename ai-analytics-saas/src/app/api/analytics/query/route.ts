@@ -336,7 +336,7 @@ function buildSimpleSqlQuery(question: string, schema: Array<{ table_name?: unkn
   if (isSum) {
     const numericFields = selected.columns.filter(column => /^(smallint|integer|bigint|numeric|decimal|real|double precision|float|double|int|mediumint)$/i.test(column.type) && /^(amount|total|price|revenue|sales|value|subtotal|grand_total|total_amount)$/i.test(column.name));
     if (numericFields.length !== 1) return null;
-    return { sql: "SELECT SUM(" + quote(numericFields[0].name) + ") AS total FROM " + tableName + where, summary: "Sum of " + numericFields[0].name + " in " + selected.name + ".", isCount: false, limit: 1 };
+    return { sql: "SELECT SUM(" + quote(numericFields[0].name) + ") AS total FROM " + tableName + where, summary: "Sum of " + numericFields[0].name + " in " + selected.name + ".", isCount: false, limit: 100 };
   }
   const requested = /\b(?:top|first|last|show|list|get)\s+(\d{1,3})\b/.exec(normalized);
   const limit = requested ? Math.min(100, Math.max(1, Number(requested[1]))) : 20;
