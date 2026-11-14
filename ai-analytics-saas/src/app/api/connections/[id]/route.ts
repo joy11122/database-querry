@@ -4,6 +4,7 @@ import { auth } from "@/lib/auth";
 import { connectMongoose } from "@/lib/mongoose";
 import { DBConnectionModel } from "@/db/models/db-connection.model";
 import { decryptConnectionSecret } from "@/lib/connection-crypto";
+import { releaseConnectionSlot } from "@/services/billing/usage";
 import { inspectExternalDb, testExternalDb, type ExternalDbConfig } from "@/lib/external-database";
 
 export const runtime = "nodejs";
@@ -15,6 +16,7 @@ export async function DELETE(_request: Request, context: { params: { id: string 
   await connectMongoose();
   const deleted = await DBConnectionModel.findOneAndDelete({ _id: context.params.id, userId: session.user.id }).exec();
   if (!deleted) return NextResponse.json({ error: { message: "Connection not found." } }, { status: 404 });
+  if (deleted.isActive) await releaseConnectionSlot(session.user.id);
   return NextResponse.json({ success: true });
 }
 
