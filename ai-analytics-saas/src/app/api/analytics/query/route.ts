@@ -6,7 +6,7 @@ import { auth } from "@/lib/auth";
 import { connectMongoose } from "@/lib/mongoose";
 import { DBConnectionModel } from "@/db/models/db-connection.model";
 import { UsageEventModel } from "@/db/models/usage-event.model";
-import { getUserPlan } from "@/services/billing/usage";
+import { getUserPlan, releaseQueryUsage, reserveQueryUsage } from "@/services/billing/usage";
 import { assertSafeExternalHost, decodeExternalDbConfig } from "@/lib/external-database";
 import { toPublicError } from "@/lib/errors";
 import { validateMongoAnalyticsQuery } from "@/services/ai/query-validator.service";
@@ -43,6 +43,8 @@ export async function POST(request: Request) {
   const started = Date.now();
   let stage = "parse-request";
   let databaseType: string | undefined;
+  let usageReservation: { monthKey: string } | null = null;
+  let usageCommitted = false;
   try {
     const input = inputSchema.parse(await request.json());
     stage = "connect-app-database";
@@ -53,7 +55,8 @@ export async function POST(request: Request) {
       DBConnectionModel.findOne({ _id: input.connectionId, userId: session.user.id, isActive: true }).exec(),
     ]);
     if (!connection) return NextResponse.json({ error: { code: "CONNECTION_NOT_FOUND", message: "Choose an active database connection that belongs to your account." } }, { status: 404 });
-    if (plan.remaining <= 0) return NextResponse.json({ error: { code: "USAGE_LIMIT", message: "Your monthly AI question limit has been reached." } }, { status: 429 });
+    usageReservation = await reserveQueryUsage(session.user.id, plan.monthlyQueries);
+    if (!usageReservation) return NextResponse.json({ error: { code: "USAGE_LIMIT", message: "Your monthly query limit has been reached." } }, { status: 429 });
     const apiKey = process.env.OPENAI_API_KEY;
     stage = "decrypt-connection";
     const config = decodeExternalDbConfig(connection);
@@ -128,6 +131,7 @@ export async function POST(request: Request) {
             rowCount: rows.length,
             metadata: { connectionId: String(connection._id), dialect: "mongodb", queryMode: "deterministic" },
           });
+          usageCommitted = true;
           return NextResponse.json({
             summary: simpleQuery.pipeline.some(item => "$count" in item)
               ? `${simpleQuery.summary} ${Number(rows[0]?.count ?? 0)} records found.`
@@ -145,6 +149,8 @@ export async function POST(request: Request) {
           });
         }
         if (!apiKey) {
+          if (usageReservation) await releaseQueryUsage(session.user.id, usageReservation.monthKey);
+          usageReservation = null;
           return NextResponse.json({
             error: { code: "AI_NOT_CONFIGURED", message: "This question needs AI query generation. Add OPENAI_API_KEY to your deployment environment." },
           }, { status: 503 });
@@ -187,6 +193,7 @@ export async function POST(request: Request) {
         const columns = [...new Set(rows.flatMap(row => Object.keys(row)))].slice(0, 100);
         stage = "save-query-usage";
         await UsageEventModel.create({ userId: session.user.id, kind: "query_success", createdAt: new Date(), durationMs: Date.now() - started, rowCount: rows.length, metadata: { connectionId: String(connection._id), dialect: "mongodb" } });
+        usageCommitted = true;
         return NextResponse.json({ summary: generated.summary, sql: JSON.stringify({ collection: generated.collection, pipeline: generated.pipeline }, null, 2), columns, rows: rows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value instanceof Date ? value.toISOString() : typeof value === "object" && value !== null ? JSON.stringify(value) : value]))), rowCount: rows.length, truncated: rows.length >= 100, remaining: Math.max(0, plan.remaining - 1) });
       } finally { await mongo.close(); }
     }
@@ -200,10 +207,13 @@ export async function POST(request: Request) {
       const result = await executeReadOnly(config, safeSql);
       stage = "save-query-usage";
       await UsageEventModel.create({ userId: session.user.id, kind: "query_success", createdAt: new Date(), durationMs: Date.now() - started, rowCount: result.rows.length, metadata: { connectionId: String(connection._id), dialect: config.type, queryMode: "deterministic" } });
+      usageCommitted = true;
       const count = simpleSql.isCount ? Number(result.rows[0]?.count ?? 0) : undefined;
       return NextResponse.json({ summary: simpleSql.isCount ? simpleSql.summary + " " + count + " records found." : simpleSql.summary, sql: safeSql, columns: result.columns, rows: result.rows, rowCount: result.rows.length, truncated: !simpleSql.isCount && result.rows.length >= simpleSql.limit, remaining: Math.max(0, plan.remaining - 1), queryMode: "deterministic" });
     }
     if (!apiKey) {
+      if (usageReservation) await releaseQueryUsage(session.user.id, usageReservation.monthKey);
+      usageReservation = null;
       return NextResponse.json({
         error: { code: "AI_NOT_CONFIGURED", message: "This question needs AI query generation. Add OPENAI_API_KEY to your deployment environment." },
       }, { status: 503 });
@@ -229,8 +239,13 @@ export async function POST(request: Request) {
     const result = await executeReadOnly(config, sql);
     stage = "save-query-usage";
     await UsageEventModel.create({ userId: session.user.id, kind: "query_success", createdAt: new Date(), durationMs: Date.now() - started, rowCount: result.rows.length, metadata: { connectionId: String(connection._id), dialect: config.type } });
+      usageCommitted = true;
     return NextResponse.json({ summary: generated.summary, sql, columns: result.columns, rows: result.rows, rowCount: result.rows.length, truncated: result.rows.length >= 100, remaining: Math.max(0, plan.remaining - 1) });
   } catch (error) {
+    if (usageReservation && !usageCommitted) {
+      try { await releaseQueryUsage(session.user.id, usageReservation.monthKey); }
+      catch (releaseError) { console.error("Could not release query quota reservation", { userId: session.user.id, name: releaseError instanceof Error ? releaseError.name : "UnknownError" }); }
+    }
     const safe = toPublicError(error);
     if (safe.statusCode === 400) return NextResponse.json({ error: { code: safe.code, message: "Please enter a clear question and try again." } }, { status: 400 });
     const diagnostic = error && typeof error === "object" ? error as { name?: unknown; code?: unknown; codeName?: unknown; status?: unknown; type?: unknown } : {};
