@@ -2,6 +2,7 @@ import { MongoClient, type Db, type Document } from "mongodb";
 import { BaseDatabaseAdapter, type QueryExecutionOptions, type QueryExecutionResult } from "./base.adapter";
 import type { MongoCredentials, SchemaMetadata } from "@/types/database";
 import { validateMongoAnalyticsQuery } from "@/services/ai/query-validator.service";
+import { assertSafeMongoUri } from "@/lib/external-database";
 
 export class MongoDatabaseAdapter extends BaseDatabaseAdapter {
   public readonly type = "mongodb" as const;
@@ -11,6 +12,7 @@ export class MongoDatabaseAdapter extends BaseDatabaseAdapter {
   public constructor(private readonly credentials: MongoCredentials) { super(); }
   public async connect(): Promise<void> {
     if (this.client) return;
+    await assertSafeMongoUri(this.credentials.uri);
     this.client = new MongoClient(this.credentials.uri, { maxPoolSize: 5, serverSelectionTimeoutMS: 5000, connectTimeoutMS: 5000 });
     try {
       await this.client.connect();
