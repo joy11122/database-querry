@@ -40,7 +40,7 @@ export function ChatShell() {
   }
 
   return <section className="mx-auto flex min-h-[60vh] max-w-5xl flex-col">
-    <div><p className="text-sm font-semibold uppercase tracking-wider text-indigo-600">AI analytics</p><h1 className="mt-2 text-3xl font-semibold">Ask your data</h1><p className="mt-2 text-slate-600">Ask a business question in plain English. Queries are restricted to read-only SELECT statements.</p></div>
+    <div><p className="text-sm font-semibold uppercase tracking-wider text-indigo-600">AI analytics</p><h1 className="mt-2 text-3xl font-semibold">Ask your data</h1><p className="mt-2 text-slate-600">Ask a business question in plain English. Simple MongoDB questions run directly; complex questions use AI. All queries are read-only.</p></div>
     <form onSubmit={ask} className="mt-8 rounded-2xl border bg-white p-5 shadow-sm">
       <label htmlFor="analytics-connection" className="text-sm font-medium">Database connection</label>
       <select id="analytics-connection" value={connectionId} onChange={event => setConnectionId(event.target.value)} className="mt-2 w-full rounded-xl border px-3 py-2.5 text-sm" required disabled={!connections.length}>
@@ -49,7 +49,7 @@ export function ChatShell() {
       <label htmlFor="analytics-question" className="mt-4 block text-sm font-medium">Your question</label>
       <textarea id="analytics-question" value={question} onChange={event => setQuestion(event.target.value)} rows={3} maxLength={2000} placeholder="e.g. Show monthly revenue by region" className="mt-2 w-full resize-y rounded-xl border px-3 py-3 text-sm outline-none focus:ring-2 focus:ring-indigo-500" required />
       {error && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
-      <button type="submit" disabled={!question.trim() || !connectionId || loading} className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{loading ? "Analyzing…" : "Ask AI"}</button>
+      <button type="submit" disabled={!question.trim() || !connectionId || loading} className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{loading ? "Running…" : "Run Query"}</button>
     </form>
     {!connections.length && <p className="mt-4 text-sm text-slate-600">First, <a className="font-semibold text-indigo-600 underline" href="/connections">connect PostgreSQL or MySQL</a>. Configure OPENAI_API_KEY and CONNECTION_ENCRYPTION_KEY in the deployment environment.</p>}
     {result && <section aria-live="polite" className="mt-6 space-y-4 rounded-2xl border bg-white p-5">
