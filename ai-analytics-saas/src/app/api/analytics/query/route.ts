@@ -47,7 +47,6 @@ export async function POST(request: Request) {
     if (!connection) return NextResponse.json({ error: { code: "CONNECTION_NOT_FOUND", message: "Choose an active database connection that belongs to your account." } }, { status: 404 });
     if (plan.remaining <= 0) return NextResponse.json({ error: { code: "USAGE_LIMIT", message: "Your monthly AI question limit has been reached." } }, { status: 429 });
     const apiKey = process.env.OPENAI_API_KEY;
-    if (!apiKey) return NextResponse.json({ error: { code: "AI_NOT_CONFIGURED", message: "AI query generation is not configured. Add OPENAI_API_KEY to your deployment environment." } }, { status: 503 });
     stage = "decrypt-connection";
     const config = decodeExternalDbConfig(connection);
     databaseType = config.type;
@@ -103,6 +102,42 @@ export async function POST(request: Request) {
             })),
           });
         }
+        const simpleQuery = buildSimpleMongoQuery(input.question, schema, collections);
+        if (simpleQuery) {
+          stage = "execute-simple-mongodb-query";
+          const rows = await db.collection(simpleQuery.collection).aggregate(simpleQuery.pipeline, {
+            maxTimeMS: 10000,
+            allowDiskUse: false,
+          }).toArray();
+          const columns = [...new Set(rows.flatMap(row => Object.keys(row)))].slice(0, 100);
+          stage = "save-query-usage";
+          await UsageEventModel.create({
+            userId: session.user.id,
+            kind: "query_success",
+            createdAt: new Date(),
+            durationMs: Date.now() - started,
+            rowCount: rows.length,
+            metadata: { connectionId: String(connection._id), dialect: "mongodb", queryMode: "deterministic" },
+          });
+          return NextResponse.json({
+            summary: simpleQuery.summary,
+            sql: JSON.stringify({ collection: simpleQuery.collection, pipeline: simpleQuery.pipeline }, null, 2),
+            columns,
+            rows: rows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [
+              key,
+              value instanceof Date ? value.toISOString() : typeof value === "object" && value !== null ? JSON.stringify(value) : value,
+            ]))),
+            rowCount: rows.length,
+            truncated: rows.length >= 100,
+            remaining: Math.max(0, plan.remaining - 1),
+            queryMode: "deterministic",
+          });
+        }
+        if (!apiKey) {
+          return NextResponse.json({
+            error: { code: "AI_NOT_CONFIGURED", message: "This question needs AI query generation. Add OPENAI_API_KEY to your deployment environment." },
+          }, { status: 503 });
+        }
         stage = "generate-mongodb-aggregation";
         const client = new OpenAI({ apiKey });
         const completion = await client.chat.completions.create({
@@ -137,6 +172,11 @@ export async function POST(request: Request) {
     }
     stage = "inspect-sql-schema";
     const schema = config.type === "postgres" ? await getSchema(config, "postgresql") : await getSchema(config, "mysql");
+    if (!apiKey) {
+      return NextResponse.json({
+        error: { code: "AI_NOT_CONFIGURED", message: "This question needs AI query generation. Add OPENAI_API_KEY to your deployment environment." },
+      }, { status: 503 });
+    }
     stage = "generate-sql-query";
     const client = new OpenAI({ apiKey });
     const completion = await client.chat.completions.create({
@@ -175,6 +215,78 @@ export async function POST(request: Request) {
     });
     return NextResponse.json({ error: { code: "QUERY_FAILED", message: "The analytics query could not be completed. Check your connection and question, then try again." } }, { status: safe.statusCode >= 500 ? 500 : 400 });
   }
+}
+
+type SimpleMongoPlan = { collection: string; pipeline: import("mongodb").Document[]; summary: string };
+
+function normalizeWords(value: string): string[] {
+  return value
+    .replace(/([a-z0-9])([A-Z])/g, "$1 $2")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, " ")
+    .trim()
+    .split(/\\s+/)
+    .filter(Boolean);
+}
+
+function buildSimpleMongoQuery(
+  question: string,
+  schema: Array<{ collection: string; fields: Array<{ name: string; types: string[] }> }>,
+  collections: string[],
+): SimpleMongoPlan | null {
+  const normalized = question.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const words = new Set(normalized.split(/\\s+/).filter(Boolean));
+  const isCount = /\\b(how many|count|number of|total number of)\\b/.test(normalized);
+  const isList = /\\b(show|list|get|find|display|fetch|what are|which)\\b/.test(normalized);
+  if (!isCount && !isList) return null;
+
+  const ranked = schema
+    .filter(item => collections.includes(item.collection))
+    .map(item => {
+      const nameWords = normalizeWords(item.collection);
+      const score = nameWords.reduce((total, word) => {
+        const singular = word.endsWith("s") ? word.slice(0, -1) : word;
+        return total + (words.has(word) || words.has(singular) ? 1 : 0);
+      }, 0);
+      return { item, score };
+    })
+    .filter(item => item.score > 0)
+    .sort((a, b) => b.score - a.score);
+  if (!ranked.length || (ranked.length > 1 && ranked[0].score === ranked[1].score)) return null;
+
+  const selected = ranked[0].item;
+  const wantsAvailability = /\\b(available|availability|active|enabled|in stock)\\b/.test(normalized);
+  const pipeline: import("mongodb").Document[] = [];
+  if (wantsAvailability) {
+    const booleanAvailabilityField = selected.fields.find(field =>
+      /^(isactive|isavailable|available|enabled|active|instock)$/i.test(field.name.replace(/[._]/g, "")) &&
+      field.types.includes("boolean")
+    );
+    if (!booleanAvailabilityField) return null;
+    pipeline.push({ $match: { [booleanAvailabilityField.name]: true } });
+  }
+
+  if (isCount) {
+    pipeline.push({ $count: "count" });
+    return {
+      collection: selected.collection,
+      pipeline,
+      summary: wantsAvailability
+        ? `Count of available records in ${selected.collection}.`
+        : `Total number of records in ${selected.collection}.`,
+    };
+  }
+
+  const requestedLimit = /\\b(?:top|first|last|show|list|get)\\s+(\\d{1,3})\\b/.exec(normalized);
+  const limit = requestedLimit ? Math.min(100, Math.max(1, Number(requestedLimit[1]))) : 20;
+  pipeline.push({ $limit: limit });
+  return {
+    collection: selected.collection,
+    pipeline,
+    summary: wantsAvailability
+      ? `Showing up to ${limit} available records from ${selected.collection}.`
+      : `Showing up to ${limit} records from ${selected.collection}.`,
+  };
 }
 
 async function getSchema(config: Extract<ReturnType<typeof decodeExternalDbConfig>, { type: "postgres" | "mysql" }>, dialect: "postgresql" | "mysql") {
