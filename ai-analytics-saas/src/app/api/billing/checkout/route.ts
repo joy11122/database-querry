@@ -7,10 +7,9 @@ export const runtime = "nodejs";
 const inputSchema = z.object({ plan: z.enum(["pro", "business"]) });
 
 export async function POST(request: Request) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
-
   try {
+    const session = await auth();
+    if (!session?.user?.id) return NextResponse.json({ error: "Authentication required." }, { status: 401 });
     const input = inputSchema.parse(await request.json());
     const secret = process.env.STRIPE_SECRET_KEY;
     const priceId = input.plan === "pro" ? process.env.STRIPE_PRICE_PRO : process.env.STRIPE_PRICE_BUSINESS;
@@ -44,7 +43,7 @@ export async function POST(request: Request) {
       headers: {
         Authorization: "Bearer " + secret,
         "Content-Type": "application/x-www-form-urlencoded",
-        "Idempotency-Key": `checkout-${session.user.id}-${input.plan}`,
+        "Idempotency-Key": `checkout-${session.user.id}-${input.plan}-${Math.floor(Date.now() / 60000)}`,
       },
       body: form,
       cache: "no-store",
