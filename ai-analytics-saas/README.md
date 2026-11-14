@@ -25,17 +25,17 @@ A multi-user AI analytics SaaS foundation built with Next.js App Router. Users c
 
 1. Use Node.js 20 or newer.
 2. Copy `.env.example` to `.env.local` and configure the required values.
-3. Generate independent secrets: `openssl rand -base64 32` for `AUTH_SECRET` and `DATABASE_ENCRYPTION_KEY`.
+3. Generate independent secrets: `openssl rand -base64 32` for `AUTH_SECRET` and `CONNECTION_ENCRYPTION_KEY`.
 4. Configure Google OAuth callback `http://localhost:3000/api/auth/callback/google`, or configure SMTP for email magic links. At least one provider must be configured.
 5. Install and validate:
 
 ```bash
 npm install
-npm run typecheck
-npm run lint
-npm run build
+npm run check
 npm run dev
 ```
+
+`npm run check` runs TypeScript, ESLint, unit tests and the production build.
 
 6. Open `http://localhost:3000`.
 
@@ -60,7 +60,7 @@ This repository is an enhanced commercial starter, **not a certified or fully pr
 - Install dependencies and run `npm run typecheck`, `npm run lint`, and `npm run build` in a network-enabled environment; fix all diagnostics.
 - Commit a generated `package-lock.json` and use `npm ci` in CI/deploys.
 - Add automated unit, integration and browser end-to-end tests. Test with disposable read-only PostgreSQL/MySQL/MongoDB users and Stripe test mode.
-- Enforce outbound network egress restrictions at infrastructure level. DNS checks are defense-in-depth and cannot completely eliminate DNS rebinding or cloud metadata access risks.
+- Set `OUTBOUND_DB_ALLOWED_HOSTS` to exact customer database hosts or narrowly scoped wildcard suffixes in production. The application blocks private/reserved destinations and validates MongoDB SRV targets. Also enforce outbound network egress restrictions at infrastructure level; DNS checks alone cannot completely eliminate DNS rebinding or cloud metadata access risks.
 - Use dedicated read-only database accounts, strict network allowlists, TLS, query timeouts and least privilege. Never connect to customer databases with administrator credentials.
 - Add privacy policy, terms, data-processing agreement, retention/deletion process, incident response, backups, monitoring, alerting and support workflows appropriate to your market.
 - Review subscription state transitions, refunds, failed payments, taxes, invoices, cancellation and customer communication for your jurisdiction.
