@@ -390,9 +390,9 @@ type SimpleSqlPlan = { sql: string; summary: string; isCount: boolean; limit: nu
 function buildSimpleSqlQuery(question: string, schema: SqlSchemaRow[], dialect: "postgresql" | "mysql"): SimpleSqlPlan | null {
   const normalized = normalizeSqlWords(question);
   const words = new Set(normalized.split(/\s+/).filter(Boolean));
-  const isCount = /\b(how many|count|number of|total number of)\b/.test(normalized);
-  const isSum = /\b(total|sum)\b/.test(normalized) && !isCount;
-  const isList = /\b(show|list|get|find|display|fetch|what are|which)\b/.test(normalized);
+  const isCount = SQL_INTENT_PATTERNS.count.test(normalized);
+  const isSum = SQL_INTENT_PATTERNS.sum.test(normalized) && !isCount;
+  const isList = SQL_INTENT_PATTERNS.list.test(normalized);
   if (!isCount && !isList && !isSum) return null;
   const tables = new Map<string, { columns: Array<{ name: string; type: string }> }>();
   for (const row of schema) {
@@ -407,9 +407,9 @@ function buildSimpleSqlQuery(question: string, schema: SqlSchemaRow[], dialect: 
   }).filter(table => table.score > 0).sort((a, b) => b.score - a.score);
   if (!ranked.length || (ranked.length > 1 && ranked[0].score === ranked[1].score)) return null;
   const selected = ranked[0];
-  const quote = (identifier: string) => dialect === "mysql" ? "\u0060" + identifier.replace(/\u0060/g, "\u0060\u0060") + "\u0060" : "\"" + identifier.replace(/\"/g, "\"\"") + "\"";
+  const quote = (identifier: string) => quoteSqlIdentifier(identifier, dialect);
   const tableName = quote(selected.name);
-  const wantsAvailability = /\b(available|availability|active|enabled|in stock)\b/.test(normalized);
+  const wantsAvailability = SQL_INTENT_PATTERNS.availability.test(normalized);
   let where = "";
   if (wantsAvailability) {
     const field = selected.columns.find(column => /^(isactive|is_active|isavailable|is_available|available|enabled|active|instock|in_stock)$/i.test(column.name) && /^(bool|boolean|tinyint|bit)$/i.test(column.type));
@@ -422,7 +422,7 @@ function buildSimpleSqlQuery(question: string, schema: SqlSchemaRow[], dialect: 
     if (numericFields.length !== 1) return null;
     return { sql: "SELECT SUM(" + quote(numericFields[0].name) + ") AS total FROM " + tableName + where, summary: "Sum of " + numericFields[0].name + " in " + selected.name + ".", isCount: false, limit: 100 };
   }
-  const requested = /\b(?:top|first|last|show|list|get)\s+(\d{1,3})\b/.exec(normalized);
+  const requested = SQL_INTENT_PATTERNS.limit.exec(normalized);
   const limit = requested ? Math.min(100, Math.max(1, Number(requested[1]))) : 20;
   return { sql: "SELECT * FROM " + tableName + where + " LIMIT " + limit, summary: wantsAvailability ? "Showing up to " + limit + " available records from " + selected.name + "." : "Showing up to " + limit + " records from " + selected.name + ".", isCount: false, limit };
 }
