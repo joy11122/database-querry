@@ -3,6 +3,7 @@ import { SubscriptionModel } from "@/db/models/subscription.model";
 import { UsageEventModel } from "@/db/models/usage-event.model";
 import { UsageCounterModel } from "@/db/models/usage-counter.model";
 import { ConnectionCounterModel } from "@/db/models/connection-counter.model";
+import { RateLimitModel } from "@/db/models/rate-limit.model";
 import { DBConnectionModel } from "@/db/models/db-connection.model";
 import { PLANS, type PlanId } from "@/services/billing/plans";
 
@@ -10,6 +11,46 @@ function getCurrentMonth() {
   const now = new Date();
   const monthStart = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), 1));
   return { monthStart, monthKey: monthStart.toISOString().slice(0, 7) };
+}
+
+export async function consumeRateLimit(key: string, limit: number, windowMs: number): Promise<{ allowed: boolean; retryAfterSeconds: number }> {
+  await connectMongoose();
+  const now = new Date();
+  const resetAt = new Date(now.getTime() + windowMs);
+  const active = await RateLimitModel.findOneAndUpdate(
+    { key, resetAt: { $gt: now }, count: { $lt: limit } },
+    { $inc: { count: 1 } },
+    { new: true },
+  ).lean().exec();
+  if (active) return { allowed: true, retryAfterSeconds: 0 };
+
+  const expired = await RateLimitModel.findOneAndUpdate(
+    { key, resetAt: { $lte: now } },
+    { $set: { count: 1, resetAt } },
+    { new: true },
+  ).lean().exec();
+  if (expired) return { allowed: true, retryAfterSeconds: 0 };
+
+  const existing = await RateLimitModel.findOne({ key }).lean().exec();
+  if (existing) {
+    return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil((existing.resetAt.getTime() - now.getTime()) / 1000)) };
+  }
+
+  try {
+    await RateLimitModel.create({ key, count: 1, resetAt });
+    return { allowed: true, retryAfterSeconds: 0 };
+  } catch (error) {
+    const code = error && typeof error === "object" ? (error as { code?: unknown }).code : undefined;
+    if (code !== 11000) throw error;
+    const raced = await RateLimitModel.findOneAndUpdate(
+      { key, resetAt: { $gt: now }, count: { $lt: limit } },
+      { $inc: { count: 1 } },
+      { new: true },
+    ).lean().exec();
+    if (raced) return { allowed: true, retryAfterSeconds: 0 };
+    const current = await RateLimitModel.findOne({ key }).lean().exec();
+    return { allowed: false, retryAfterSeconds: Math.max(1, Math.ceil(((current?.resetAt.getTime() ?? resetAt.getTime()) - now.getTime()) / 1000)) };
+  }
 }
 
 export async function reserveQueryUsage(userId: string, limit: number): Promise<{ monthKey: string } | null> {
