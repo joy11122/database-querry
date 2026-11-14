@@ -93,7 +93,6 @@ export async function getUserPlan(userId: string) {
       userId, kind: "query_success", createdAt: { $gte: monthStart },
     }).exec(),
     ConnectionCounterModel.findOne({ userId }).lean().exec(),
-    ConnectionCounterModel.findOne({ userId }).lean().exec(),
     DBConnectionModel.countDocuments({ userId, isActive: true }).exec(),
   ]);
   const used = counter?.count ?? legacyUsed;
