@@ -1,6 +1,7 @@
 import { Pool, type PoolConfig } from "pg";
 import { BaseDatabaseAdapter, type QueryExecutionOptions, type QueryExecutionResult } from "./base.adapter";
 import type { PostgreSQLCredentials, SchemaMetadata } from "@/types/database";
+import { assertSafeExternalHost } from "@/lib/external-database";
 
 export class PostgreSQLAdapter extends BaseDatabaseAdapter {
   public readonly type = "postgresql" as const;
@@ -9,6 +10,10 @@ export class PostgreSQLAdapter extends BaseDatabaseAdapter {
 
   public async connect(): Promise<void> {
     if (this.pool) return;
+    let host: string;
+    try { host = new URL(this.credentials.dsn).hostname; }
+    catch { throw new Error("Invalid PostgreSQL connection string."); }
+    await assertSafeExternalHost(host);
     const config: PoolConfig = { connectionString: this.credentials.dsn, max: 5, idleTimeoutMillis: 30000, connectionTimeoutMillis: 5000 };
     this.pool = new Pool(config);
     try { await this.pool.query("SELECT 1"); } catch (error) { await this.pool.end(); this.pool = null; throw error; }
