@@ -307,10 +307,10 @@ type SimpleSqlPlan = { sql: string; summary: string; isCount: boolean; limit: nu
 
 function buildSimpleSqlQuery(question: string, schema: SqlSchemaRow[], dialect: "postgresql" | "mysql"): SimpleSqlPlan | null {
   const normalized = question.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  const words = new Set(normalized.split(/\\s+/).filter(Boolean));
-  const isCount = /\\b(how many|count|number of|total number of)\\b/.test(normalized);
-  const isSum = /\\b(total|sum)\\b/.test(normalized) && !isCount;
-  const isList = /\\b(show|list|get|find|display|fetch|what are|which)\\b/.test(normalized);
+  const words = new Set(normalized.split(/\s+/).filter(Boolean));
+  const isCount = /\b(how many|count|number of|total number of)\b/.test(normalized);
+  const isSum = /\b(total|sum)\b/.test(normalized) && !isCount;
+  const isList = /\b(show|list|get|find|display|fetch|what are|which)\b/.test(normalized);
   if (!isCount && !isList && !isSum) return null;
   const tables = new Map<string, { columns: Array<{ name: string; type: string }> }>();
   for (const row of schema) {
