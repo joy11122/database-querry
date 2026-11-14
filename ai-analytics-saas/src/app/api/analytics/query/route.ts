@@ -7,7 +7,7 @@ import { connectMongoose } from "@/lib/mongoose";
 import { DBConnectionModel } from "@/db/models/db-connection.model";
 import { UsageEventModel } from "@/db/models/usage-event.model";
 import { consumeRateLimit, getUserPlan, releaseQueryUsage, reserveQueryUsage } from "@/services/billing/usage";
-import { assertSafeExternalHost, decodeExternalDbConfig } from "@/lib/external-database";
+import { assertSafeExternalHost, assertSafeMongoUri, decodeExternalDbConfig } from "@/lib/external-database";
 import { toPublicError } from "@/lib/errors";
 import { validateMongoAnalyticsQuery } from "@/services/ai/query-validator.service";
 import { Client as PgClient } from "pg";
@@ -64,7 +64,7 @@ export async function POST(request: Request) {
     const config = decodeExternalDbConfig(connection);
     databaseType = config.type;
     if (config.type === "mongodb") {
-      await assertSafeExternalHost(new URL(config.uri).hostname);
+      await assertSafeMongoUri(config.uri);
       const mongo = new MongoClient(config.uri, { serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 });
       try {
         stage = "connect-external-mongodb";
