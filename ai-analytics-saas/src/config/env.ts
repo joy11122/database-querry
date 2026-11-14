@@ -2,7 +2,7 @@ import { z } from "zod";
 
 const envSchema = z.object({
   NODE_ENV: z.enum(["development", "test", "production"]).default("development"),
-  AUTH_SECRET: z.string().min(1).optional(),
+  AUTH_SECRET: z.string().min(32).optional(),
   AUTH_URL: z.string().url().optional(),
   GOOGLE_CLIENT_ID: z.string().optional(),
   GOOGLE_CLIENT_SECRET: z.string().optional(),
@@ -26,4 +26,11 @@ export const env = envSchema.parse({
   MONGODB_DATABASE: process.env.MONGODB_DATABASE,
   OUTBOUND_DB_ALLOWED_HOSTS: process.env.OUTBOUND_DB_ALLOWED_HOSTS,
   ADMIN_EMAILS: process.env.ADMIN_EMAILS,
+}).superRefine((values, context) => {
+  if (Boolean(values.GOOGLE_CLIENT_ID) !== Boolean(values.GOOGLE_CLIENT_SECRET)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["GOOGLE_CLIENT_SECRET"], message: "Configure both GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET." });
+  }
+  if (Boolean(values.AUTH_EMAIL_SERVER) !== Boolean(values.AUTH_EMAIL_FROM)) {
+    context.addIssue({ code: z.ZodIssueCode.custom, path: ["AUTH_EMAIL_SERVER"], message: "Configure both AUTH_EMAIL_SERVER and AUTH_EMAIL_FROM." });
+  }
 });
