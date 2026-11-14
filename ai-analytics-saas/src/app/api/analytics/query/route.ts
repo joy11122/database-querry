@@ -18,22 +18,58 @@ export const runtime = "nodejs";
 const inputSchema = z.object({ question: z.string().trim().min(3).max(2000), connectionId: z.string().regex(/^[a-f\d]{24}$/i) });
 const parser = new Parser();
 
-function validateReadOnlySql(raw: string, dialect: "postgresql" | "mysql", allowedTables?: Set<string>): string {
-  const sql = raw.trim().replace(/;+\s*$/, "");
+function unquoteSqlIdentifier(value: string): string {
+  return value.replace(/^[`"\\[]/, "").replace(/[`"\\]]$/, "")
+    .replace(/""/g, '"').replace(/``/g, "`").replace(/\\]\\]/g, "]");
+}
+
+function validateReadOnlySql(raw: string, dialect: "postgresql" | "mysql", schema?: SqlSchemaRow[]): string {
+  const sql = raw.trim().replace(/;+\\s*$/, "");
   if (!sql || sql.includes(";") || sql.includes("--") || sql.includes("/*") || sql.includes("*/") || sql.length > 12000) throw new Error("The generated query is not a single statement.");
-  if (/\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|call|execute|into|outfile|load_file|information_schema|sleep|benchmark)\b/i.test(sql) || /\b(pg_sleep|pg_read_file|pg_ls_dir|lo_import|lo_export|load_file|sleep|benchmark|get_lock|release_lock)\s*\(/i.test(sql) || /\bfor\s+(update|share)\b|\block\s+in\s+share\s+mode\b/i.test(sql)) throw new Error("Only read-only SELECT queries are allowed.");
-  const ast = parser.astify(sql, { database: dialect === "postgresql" ? "Postgresql" : "MySQL" });
+  if (/\\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|call|execute|into|outfile|load_file|information_schema|pg_catalog|mysql\\.user|sleep|benchmark)\\b/i.test(sql) || /\\b(pg_sleep|pg_read_file|pg_ls_dir|lo_import|lo_export|load_file|sleep|benchmark|get_lock|release_lock)\\s*\\(/i.test(sql) || /\\bfor\\s+(update|share)\\b|\\block\\s+in\\s+share\\s+mode\\b/i.test(sql)) throw new Error("Only read-only SELECT queries are allowed.");
+  const dialectName = dialect === "postgresql" ? "Postgresql" : "MySQL";
+  const ast = parser.astify(sql, { database: dialectName });
   const statements = Array.isArray(ast) ? ast : [ast];
   if (statements.length !== 1 || !statements[0] || (statements[0] as { type?: string }).type !== "select") throw new Error("Only SELECT queries are allowed.");
-  if (allowedTables) {
-    const referencedTables = parser.tableList(sql, { database: dialect === "postgresql" ? "Postgresql" : "MySQL" });
+  if (schema) {
+    const tables = new Map<string, Set<string>>();
+    for (const row of schema) {
+      if (typeof row.table_name !== "string" || typeof row.column_name !== "string") continue;
+      const name = row.table_name.toLowerCase();
+      const columns = tables.get(name) ?? new Set<string>();
+      columns.add(row.column_name.toLowerCase());
+      tables.set(name, columns);
+    }
+    const referencedTables = parser.tableList(sql, { database: dialectName });
+    const allowed = new Set<string>();
     for (const reference of referencedTables) {
-      const tableName = reference.split("::").at(-1)?.replace(/^[`"\\[]|[`"\\]]$/g, "");
-      if (!tableName || !allowedTables.has(tableName.toLowerCase())) throw new Error("Query references a table outside the connected database schema.");
+      const rawName = reference.split("::").at(-1) ?? "";
+      const parts = rawName.split(".");
+      if (parts.length > 1) {
+        const qualifier = unquoteSqlIdentifier(parts[parts.length - 2]);
+        const expectedSchema = dialect === "postgresql" ? "public" : undefined;
+        if (expectedSchema && qualifier.toLowerCase() !== expectedSchema) throw new Error("Query references a schema outside the inspected database.");
+        if (dialect === "mysql" && qualifier.toLowerCase() !== "current_database") {
+          const knownDb = schema[0] ? undefined : undefined;
+          void knownDb;
+        }
+      }
+      const tableName = unquoteSqlIdentifier(parts.at(-1) ?? "").toLowerCase();
+      if (!tableName || !tables.has(tableName)) throw new Error("Query references a table outside the connected database schema.");
+      allowed.add(tableName);
+    }
+    if (!allowed.size) throw new Error("Query must reference an inspected table.");
+    const referencedColumns = parser.columnList(sql, { database: dialectName });
+    for (const reference of referencedColumns) {
+      const columnName = unquoteSqlIdentifier(reference.split("::").at(-1) ?? "").toLowerCase();
+      if (!columnName || columnName === "*" || columnName === "1") continue;
+      if (![...allowed].some(table => tables.get(table)?.has(columnName))) {
+        throw new Error("Query references a column outside the inspected database schema.");
+      }
     }
   }
-  const limited = /\blimit\s+(\d+)/i.exec(sql);
-  if (limited) return sql.replace(/\blimit\s+\d+/i, `LIMIT ${Math.min(100, Math.max(1, Number(limited[1])))}`);
+  const limited = /\\blimit\\s+(\\d+)/i.exec(sql);
+  if (limited) return sql.replace(/\\blimit\\s+\\d+/i, `LIMIT ${Math.min(100, Math.max(1, Number(limited[1])))}`);
   return `${sql} LIMIT 100`;
 }
 
@@ -205,7 +241,7 @@ export async function POST(request: Request) {
     const simpleSql = buildSimpleSqlQuery(input.question, schema, config.type === "postgres" ? "postgresql" : "mysql");
     if (simpleSql) {
       stage = "execute-simple-sql-query";
-      const safeSql = validateReadOnlySql(simpleSql.sql, config.type === "postgres" ? "postgresql" : "mysql", new Set(schema.map(row => String(row.table_name).toLowerCase())));
+      const safeSql = validateReadOnlySql(simpleSql.sql, config.type === "postgres" ? "postgresql" : "mysql", schema);
       const result = await executeReadOnly(config, safeSql);
       stage = "save-query-usage";
       await UsageEventModel.create({ userId: session.user.id, kind: "query_success", createdAt: new Date(), durationMs: Date.now() - started, rowCount: result.rows.length, metadata: { connectionId: String(connection._id), dialect: config.type, queryMode: "deterministic" } });
