@@ -81,7 +81,7 @@ export async function assertSafeExternalHost(host: string): Promise<void> {
   await assertPublicDnsHost(normalized);
 }
 
-async function assertSafeMongoUri(uri: string): Promise<void> {
+export async function assertSafeMongoUri(uri: string): Promise<void> {
   const parsed = new URL(uri);
   if (parsed.protocol !== "mongodb:" && parsed.protocol !== "mongodb+srv:") {
     throw new Error("Only MongoDB connection URIs are supported.");
