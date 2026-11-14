@@ -95,7 +95,10 @@ export async function assertSafeMongoUri(uri: string): Promise<void> {
     for (const record of records) await assertSafeExternalHost(record.name);
   } else {
     for (const host of parsed.host.split(",")) {
-      const hostname = host.trim().replace(/^.*@/, "").replace(/^\[|\]$/g, "").split(":")[0];
+      const authorityHost = host.trim().replace(/^.*@/, "");
+      const hostname = authorityHost.startsWith("[")
+        ? authorityHost.slice(1, authorityHost.indexOf("]"))
+        : authorityHost.replace(/:\d+$/, "");
       await assertSafeExternalHost(hostname);
     }
   }
