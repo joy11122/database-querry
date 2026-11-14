@@ -13,15 +13,11 @@ import { validateMongoAnalyticsQuery } from "@/services/ai/query-validator.servi
 import { Client as PgClient } from "pg";
 import mysql from "mysql2/promise";
 import { MongoClient } from "mongodb";
+import { normalizeSqlWords, quoteSqlIdentifier, SQL_INTENT_PATTERNS, unquoteSqlIdentifier } from "@/lib/sql-patterns";
 
 export const runtime = "nodejs";
 const inputSchema = z.object({ question: z.string().trim().min(3).max(2000), connectionId: z.string().regex(/^[a-f\d]{24}$/i) });
 const parser = new Parser();
-
-function unquoteSqlIdentifier(value: string): string {
-  return value.replace(/^[`"\\[]/, "").replace(/[`"\\]]$/, "")
-    .replace(/""/g, '"').replace(/``/g, "`").replace(/\\]\\]/g, "]");
-}
 
 function validateReadOnlySql(raw: string, dialect: "postgresql" | "mysql", schema?: SqlSchemaRow[], currentDatabase?: string): string {
   const sql = raw.trim().replace(/;+\\s*$/, "");
@@ -392,7 +388,7 @@ type SqlSchemaRow = { table_name?: unknown; column_name?: unknown; data_type?: u
 type SimpleSqlPlan = { sql: string; summary: string; isCount: boolean; limit: number };
 
 function buildSimpleSqlQuery(question: string, schema: SqlSchemaRow[], dialect: "postgresql" | "mysql"): SimpleSqlPlan | null {
-  const normalized = question.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
+  const normalized = normalizeSqlWords(question);
   const words = new Set(normalized.split(/\s+/).filter(Boolean));
   const isCount = /\b(how many|count|number of|total number of)\b/.test(normalized);
   const isSum = /\b(total|sum)\b/.test(normalized) && !isCount;
