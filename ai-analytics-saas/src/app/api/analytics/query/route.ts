@@ -20,9 +20,9 @@ const inputSchema = z.object({ question: z.string().trim().min(3).max(2000), con
 const parser = new Parser();
 
 function validateReadOnlySql(raw: string, dialect: "postgresql" | "mysql", schema?: SqlSchemaRow[], currentDatabase?: string): string {
-  const sql = raw.trim().replace(/;+\\s*$/, "");
-  if (!/^\\s*select\\b/i.test(sql) || sql.includes(";") || sql.includes("--") || sql.includes("/*") || sql.includes("*/") || sql.length > 12000) throw new Error("The generated query is not a single statement.");
-  if (/\\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|call|execute|into|outfile|load_file|information_schema|pg_catalog|mysql\\.user|sleep|benchmark)\\b/i.test(sql) || /\\b(pg_sleep|pg_read_file|pg_ls_dir|lo_import|lo_export|load_file|sleep|benchmark|get_lock|release_lock)\\s*\\(/i.test(sql) || /\\bfor\\s+(update|share)\\b|\\block\\s+in\\s+share\\s+mode\\b/i.test(sql)) throw new Error("Only read-only SELECT queries are allowed.");
+  const sql = raw.trim().replace(/;+\s*$/, "");
+  if (!/^\s*select\b/i.test(sql) || sql.includes(";") || sql.includes("--") || sql.includes("/*") || sql.includes("*/") || sql.length > 12000) throw new Error("The generated query is not a single statement.");
+  if (/\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|call|execute|into|outfile|load_file|information_schema|pg_catalog|mysql\.user|sleep|benchmark)\b/i.test(sql) || /\b(pg_sleep|pg_read_file|pg_ls_dir|lo_import|lo_export|load_file|sleep|benchmark|get_lock|release_lock)\s*\(/i.test(sql) || /\bfor\s+(update|share)\b|\block\s+in\s+share\s+mode\b/i.test(sql)) throw new Error("Only read-only SELECT queries are allowed.");
   const dialectName = dialect === "postgresql" ? "Postgresql" : "MySQL";
   const ast = parser.astify(sql, { database: dialectName });
   const statements = Array.isArray(ast) ? ast : [ast];
@@ -64,8 +64,8 @@ function validateReadOnlySql(raw: string, dialect: "postgresql" | "mysql", schem
       }
     }
   }
-  const limited = /\\blimit\\s+(\\d+)/i.exec(sql);
-  if (limited) return sql.replace(/\\blimit\\s+\\d+/i, `LIMIT ${Math.min(100, Math.max(1, Number(limited[1])))}`);
+  const limited = /\blimit\s+(\d+)/i.exec(sql);
+  if (limited) return sql.replace(/\blimit\s+\d+/i, `LIMIT ${Math.min(100, Math.max(1, Number(limited[1])))}`);
   return `${sql} LIMIT 100`;
 }
 
@@ -219,7 +219,7 @@ export async function POST(request: Request) {
           if (keys.length !== 1 || !allowed.has(keys[0])) throw new Error("Unsupported aggregation stage.");
           if (keys[0] === "$limit") stage.$limit = Math.min(100, Math.max(1, Number(stage.$limit) || 100));
           if (keys[0] === "$skip") stage.$skip = Math.min(10000, Math.max(0, Number(stage.$skip) || 0));
-          if (keys[0] === "$match" && JSON.stringify(stage).match(/\\$where|\\$function|\\$regex/i)) throw new Error("Unsafe match expression.");
+          if (keys[0] === "$match" && JSON.stringify(stage).match(/\$where|\$function|\$regex/i)) throw new Error("Unsafe match expression.");
         }
         if (!generated.pipeline.some(stage => "$limit" in stage)) generated.pipeline.push({ $limit: 100 });
         stage = "execute-mongodb-aggregation";
