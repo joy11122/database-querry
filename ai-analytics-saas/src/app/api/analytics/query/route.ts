@@ -332,7 +332,7 @@ function buildSimpleMongoQuery(
       field.types.some(type => ["number", "int", "long", "double", "decimal"].includes(type))
     );
     if (numericFields.length !== 1) return null;
-    pipeline.push({ $group: { _id: null, total: { $sum: `${numericFields[0].name}` } } });
+    pipeline.push({ $group: { _id: null, total: { $sum: `$${numericFields[0].name}` } } });
     pipeline.push({ $project: { _id: 0, total: 1 } });
     return {
       collection: selected.collection,
