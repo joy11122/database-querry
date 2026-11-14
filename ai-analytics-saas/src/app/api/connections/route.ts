@@ -3,7 +3,7 @@ import { z } from "zod";
 import { auth } from "@/lib/auth";
 import { connectMongoose } from "@/lib/mongoose";
 import { DBConnectionModel } from "@/db/models/db-connection.model";
-import { getUserPlan, releaseConnectionSlot, reserveConnectionSlot } from "@/services/billing/usage";
+import { consumeRateLimit, getUserPlan, releaseConnectionSlot, reserveConnectionSlot } from "@/services/billing/usage";
 import { encryptConnectionSecret } from "@/lib/connection-crypto";
 import { inspectExternalDb, testExternalDb, type ExternalDbConfig } from "@/lib/external-database";
 import { toPublicError } from "@/lib/errors";
@@ -58,6 +58,8 @@ export async function POST(request: Request) {
     databaseType = body.type;
     stage = "connect-app-database";
     await connectMongoose();
+    const rateLimit = await consumeRateLimit(`connection-create:${session.user.id}`, 5, 10 * 60_000);
+    if (!rateLimit.allowed) return NextResponse.json({ error: { code: "RATE_LIMITED", message: "Too many connection attempts. Please wait before trying again." } }, { status: 429, headers: { "Retry-After": String(rateLimit.retryAfterSeconds) } });
     const plan = await getUserPlan(session.user.id);
     const config: ExternalDbConfig = body.type === "mongodb"
       ? { type: "mongodb", uri: body.uri, database: body.database }
