@@ -1,6 +1,7 @@
 import mysql, { type Pool, type PoolConnection } from "mysql2/promise";
 import { BaseDatabaseAdapter, type QueryExecutionOptions, type QueryExecutionResult } from "./base.adapter";
 import type { MySQLCredentials, SchemaMetadata } from "@/types/database";
+import { assertSafeExternalHost } from "@/lib/external-database";
 
 export class MySQLAdapter extends BaseDatabaseAdapter {
   public readonly type = "mysql" as const;
@@ -8,6 +9,7 @@ export class MySQLAdapter extends BaseDatabaseAdapter {
   public constructor(private readonly credentials: MySQLCredentials) { super(); }
   public async connect(): Promise<void> {
     if (this.pool) return;
+    await assertSafeExternalHost(this.credentials.host);
     this.pool = mysql.createPool({
       host: this.credentials.host, port: this.credentials.port, user: this.credentials.username,
       password: this.credentials.password, database: this.credentials.database,
