@@ -47,7 +47,7 @@ function assertSafeValue(value: unknown, knownFields: Set<string>, depth = 0): v
     }
     if (FORBIDDEN_KEYS.has(key)) throw new Error("Query contains a prohibited operator.");
     if (key.startsWith("$")) {
-      if (!ALLOWED_STAGES.has(key) && !ALLOWED_EXPRESSION_OPERATORS.has(key)) {
+      if (!(depth === 0 && ALLOWED_STAGES.has(key)) && !ALLOWED_EXPRESSION_OPERATORS.has(key)) {
         throw new Error("Query contains an unsupported expression operator.");
       }
     } else if (key.startsWith("$") || key.split(".").some(part => !part || part.startsWith("$"))) {
