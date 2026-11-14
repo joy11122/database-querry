@@ -20,6 +20,12 @@ jobs:
           node-version: 20
       - name: Install dependencies
         run: npm install --no-audit --no-fund
+      - name: Preserve generated npm lockfile for repository bootstrap
+        uses: actions/upload-artifact@v4
+        with:
+          name: generated-npm-lockfile
+          path: ai-analytics-saas/package-lock.json
+          if-no-files-found: error
       - name: TypeScript, lint, tests and production build
         run: npm run check
         env:
