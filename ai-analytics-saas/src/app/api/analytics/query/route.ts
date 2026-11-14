@@ -6,7 +6,7 @@ import { auth } from "@/lib/auth";
 import { connectMongoose } from "@/lib/mongoose";
 import { DBConnectionModel } from "@/db/models/db-connection.model";
 import { UsageEventModel } from "@/db/models/usage-event.model";
-import { getUserPlan, releaseQueryUsage, reserveQueryUsage } from "@/services/billing/usage";
+import { consumeRateLimit, getUserPlan, releaseQueryUsage, reserveQueryUsage } from "@/services/billing/usage";
 import { assertSafeExternalHost, decodeExternalDbConfig } from "@/lib/external-database";
 import { toPublicError } from "@/lib/errors";
 import { validateMongoAnalyticsQuery } from "@/services/ai/query-validator.service";
@@ -49,6 +49,8 @@ export async function POST(request: Request) {
     const input = inputSchema.parse(await request.json());
     stage = "connect-app-database";
     await connectMongoose();
+    const rateLimit = await consumeRateLimit(`analytics:${session.user.id}`, 30, 60_000);
+    if (!rateLimit.allowed) return NextResponse.json({ error: { code: "RATE_LIMITED", message: "Too many analytics requests. Please wait before trying again." } }, { status: 429, headers: { "Retry-After": String(rateLimit.retryAfterSeconds) } });
     stage = "load-plan-and-connection";
     const [plan, connection] = await Promise.all([
       getUserPlan(session.user.id),
