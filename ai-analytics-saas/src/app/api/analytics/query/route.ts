@@ -302,14 +302,16 @@ function buildSimpleMongoQuery(
   };
 }
 
+type SqlSchemaRow = { table_name?: unknown; column_name?: unknown; data_type?: unknown };
 type SimpleSqlPlan = { sql: string; summary: string; isCount: boolean; limit: number };
 
-function buildSimpleSqlQuery(question: string, schema: Array<{ table_name?: unknown; column_name?: unknown; data_type?: unknown }>, dialect: "postgresql" | "mysql"): SimpleSqlPlan | null {
+function buildSimpleSqlQuery(question: string, schema: SqlSchemaRow[], dialect: "postgresql" | "mysql"): SimpleSqlPlan | null {
   const normalized = question.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
-  const words = new Set(normalized.split(/\s+/).filter(Boolean));
-  const isCount = /\b(how many|count|number of|total number of)\b/.test(normalized);
-  const isList = /\b(show|list|get|find|display|fetch|what are|which)\b/.test(normalized);
-  if (!isCount && !isList) return null;
+  const words = new Set(normalized.split(/\\s+/).filter(Boolean));
+  const isCount = /\\b(how many|count|number of|total number of)\\b/.test(normalized);
+  const isSum = /\\b(total|sum)\\b/.test(normalized) && !isCount;
+  const isList = /\\b(show|list|get|find|display|fetch|what are|which)\\b/.test(normalized);
+  if (!isCount && !isList && !isSum) return null;
   const tables = new Map<string, { columns: Array<{ name: string; type: string }> }>();
   for (const row of schema) {
     if (typeof row.table_name !== "string" || typeof row.column_name !== "string") continue;
@@ -342,7 +344,7 @@ function buildSimpleSqlQuery(question: string, schema: Array<{ table_name?: unkn
   const limit = requested ? Math.min(100, Math.max(1, Number(requested[1]))) : 20;
   return { sql: "SELECT * FROM " + tableName + where + " LIMIT " + limit, summary: wantsAvailability ? "Showing up to " + limit + " available records from " + selected.name + "." : "Showing up to " + limit + " records from " + selected.name + ".", isCount: false, limit };
 }
-async function getSchema(config: Extract<ReturnType<typeof decodeExternalDbConfig>, { type: "postgres" | "mysql" }>, dialect: "postgresql" | "mysql") {
+async function getSchema(config: Extract<ReturnType<typeof decodeExternalDbConfig>, { type: "postgres" | "mysql" }>, dialect: "postgresql" | "mysql"): Promise<SqlSchemaRow[]> {
   if (dialect === "postgresql") {
     const client = new PgClient({ host: config.host, port: config.port, database: config.database, user: config.username, password: config.password, ssl: config.ssl ? { rejectUnauthorized: true } : false, connectionTimeoutMillis: 8000, statement_timeout: 8000 });
     try {
@@ -354,7 +356,8 @@ async function getSchema(config: Extract<ReturnType<typeof decodeExternalDbConfi
   const connection = await mysql.createConnection({ host: config.host, port: config.port, database: config.database, user: config.username, password: config.password, ssl: config.ssl ? { rejectUnauthorized: true } : undefined, connectTimeout: 8000, multipleStatements: false });
   try {
     const [rows] = await connection.query("SELECT TABLE_NAME AS table_name, COLUMN_NAME AS column_name, DATA_TYPE AS data_type FROM information_schema.columns WHERE table_schema = ? ORDER BY table_name, ordinal_position LIMIT 1000", [config.database]);
-    return rows;
+    if (!Array.isArray(rows)) throw new Error("Could not inspect SQL database schema.");
+    return rows as SqlSchemaRow[];
   } finally { await connection.end(); }
 }
 
