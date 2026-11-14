@@ -18,6 +18,14 @@ const ALLOWED_STAGES = new Set([
   "$set",
   "$unset",
 ]);
+const ALLOWED_EXPRESSION_OPERATORS = new Set([
+  "$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$in", "$nin", "$and", "$or", "$nor", "$not",
+  "$exists", "$type", "$size", "$all", "$elemMatch", "$sum", "$avg", "$min", "$max",
+  "$add", "$subtract", "$multiply", "$divide", "$mod", "$abs", "$ceil", "$floor", "$round",
+  "$ifNull", "$cond", "$switch", "$concat", "$toString", "$toInt", "$toLong", "$toDouble",
+  "$toDecimal", "$toDate", "$arrayElemAt", "$first", "$last", "$size", "$literal",
+  "$dateToString", "$year", "$month", "$dayOfMonth", "$hour", "$minute", "$second",
+]);
 const FORBIDDEN_KEYS = new Set([
   "$out",
   "$merge",
@@ -44,9 +52,12 @@ function assertSafeValue(value: unknown, depth = 0): void {
   }
   if (!value || typeof value !== "object") return;
   for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (key === "__proto__" || key === "prototype" || key === "constructor") {
+      throw new Error("Query contains an unsafe object key.");
+    }
     if (FORBIDDEN_KEYS.has(key)) throw new Error("Query contains a prohibited operator.");
-    if (key === "$expr" || key === "$jsonSchema" || key === "$where") {
-      throw new Error("Query contains a prohibited expression.");
+    if (key.startsWith("$") && !ALLOWED_STAGES.has(key) && !ALLOWED_EXPRESSION_OPERATORS.has(key)) {
+      throw new Error("Query contains an unsupported expression operator.");
     }
     assertSafeValue(nested, depth + 1);
   }
