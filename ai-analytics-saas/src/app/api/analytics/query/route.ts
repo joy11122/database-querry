@@ -249,8 +249,9 @@ function buildSimpleMongoQuery(
   const normalized = question.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const words = new Set(normalized.split(/\s+/).filter(Boolean));
   const isCount = /\b(how many|count|number of|total number of)\b/.test(normalized);
+  const isSum = /\b(total|sum)\b/.test(normalized) && !isCount;
   const isList = /\b(show|list|get|find|display|fetch|what are|which)\b/.test(normalized);
-  if (!isCount && !isList) return null;
+  if (!isCount && !isSum && !isList) return null;
 
   const ranked = schema
     .filter(item => collections.includes(item.collection))
@@ -332,6 +333,11 @@ function buildSimpleSqlQuery(question: string, schema: Array<{ table_name?: unkn
     where = " WHERE " + quote(field.name) + " = " + (dialect === "mysql" && /tinyint|bit/i.test(field.type) ? "1" : "TRUE");
   }
   if (isCount) return { sql: "SELECT COUNT(*) AS count FROM " + tableName + where, summary: wantsAvailability ? "Count of available records in " + selected.name + "." : "Total number of records in " + selected.name + ".", isCount: true, limit: 1 };
+  if (isSum) {
+    const numericFields = selected.columns.filter(column => /^(smallint|integer|bigint|numeric|decimal|real|double precision|float|double|int|mediumint)$/i.test(column.type) && /^(amount|total|price|revenue|sales|value|subtotal|grand_total|total_amount)$/i.test(column.name));
+    if (numericFields.length !== 1) return null;
+    return { sql: "SELECT SUM(" + quote(numericFields[0].name) + ") AS total FROM " + tableName + where, summary: "Sum of " + numericFields[0].name + " in " + selected.name + ".", isCount: false, limit: 1 };
+  }
   const requested = /\b(?:top|first|last|show|list|get)\s+(\d{1,3})\b/.exec(normalized);
   const limit = requested ? Math.min(100, Math.max(1, Number(requested[1]))) : 20;
   return { sql: "SELECT * FROM " + tableName + where + " LIMIT " + limit, summary: wantsAvailability ? "Showing up to " + limit + " available records from " + selected.name + "." : "Showing up to " + limit + " records from " + selected.name + ".", isCount: false, limit };
