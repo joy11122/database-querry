@@ -9,7 +9,7 @@ import { inspectExternalDb, testExternalDb, type ExternalDbConfig } from "@/lib/
 import { toPublicError } from "@/lib/errors";
 
 export const runtime = "nodejs";
-const idSchema = z.string().regex(/^[a-f\\d]{24}$/i);
+const idSchema = z.string().regex(/^[a-f\d]{24}$/i);
 
 export async function DELETE(_request: Request, context: { params: { id: string } }) {
   try {
