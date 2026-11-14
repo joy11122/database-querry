@@ -7,6 +7,22 @@ import { MongoClient } from "mongodb";
 import { decryptConnectionSecret } from "@/lib/connection-crypto";
 import type { DBConnection } from "@/db/models/db-connection.model";
 
+const TRANSIENT_DNS_CODES = new Set(["EBUSY", "EAI_AGAIN", "ETIMEOUT", "ESERVFAIL"]);
+
+async function withDnsRetry<T>(operation: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt += 1) {
+    try {
+      return await operation();
+    } catch (error) {
+      const code = error && typeof error === "object" && "code" in error
+        ? String((error as { code?: unknown }).code)
+        : "";
+      if (!TRANSIENT_DNS_CODES.has(code) || attempt >= 2) throw error;
+      await new Promise(resolve => setTimeout(resolve, 150 * (attempt + 1)));
+    }
+  }
+}
+
 function isInIpv4Range(address: string, network: string, prefix: number): boolean {
   const toNumber = (value: string) => value.split(".").reduce((total, part) => (total << 8n) | BigInt(Number(part)), 0n);
   const mask = prefix === 0 ? 0n : ((0xffffffffn << BigInt(32 - prefix)) & 0xffffffffn);
@@ -60,7 +76,7 @@ async function assertPublicDnsHost(host: string): Promise<void> {
     if (isBlockedIpv6(host)) throw new Error("Private or reserved database hosts are not allowed.");
     return;
   }
-  const addresses = await lookup(host, { all: true, verbatim: true });
+  const addresses = await withDnsRetry(() => lookup(host, { all: true, verbatim: true }));
   if (!addresses.length || addresses.some(item => item.family === 4 ? isBlockedIpv4(item.address) : isBlockedIpv6(item.address))) {
     throw new Error("Database host resolves to a private or reserved address.");
   }
@@ -90,7 +106,7 @@ export async function assertSafeMongoUri(uri: string): Promise<void> {
     const hostname = parsed.hostname.toLowerCase().replace(/\.$/, "");
     await assertSafeExternalHost(hostname);
     const service = parsed.searchParams.get("srvServiceName") || "mongodb";
-    const records = await import("node:dns/promises").then(({ resolveSrv }) => resolveSrv(`_${service}._tcp.${hostname}`));
+    const records = await withDnsRetry(() => import("node:dns/promises").then(({ resolveSrv }) => resolveSrv(`_${service}._tcp.${hostname}`)));
     if (!records.length) throw new Error("MongoDB SRV record did not return any database hosts.");
     for (const record of records) await assertSafeExternalHost(record.name);
   } else {
