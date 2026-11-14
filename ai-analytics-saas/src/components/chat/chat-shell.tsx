@@ -51,7 +51,7 @@ export function ChatShell() {
       {error && <p role="alert" className="mt-3 rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
       <button type="submit" disabled={!question.trim() || !connectionId || loading} className="mt-4 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-semibold text-white disabled:cursor-not-allowed disabled:opacity-50">{loading ? "Running…" : "Run Query"}</button>
     </form>
-    {!connections.length && <p className="mt-4 text-sm text-slate-600">First, <a className="font-semibold text-indigo-600 underline" href="/connections">connect PostgreSQL or MySQL</a>. Configure OPENAI_API_KEY and CONNECTION_ENCRYPTION_KEY in the deployment environment.</p>}
+    {!connections.length && <p className="mt-4 text-sm text-slate-600">First, <a className="font-semibold text-indigo-600 underline" href="/connections">connect MongoDB, PostgreSQL or MySQL</a>. Configure OPENAI_API_KEY and CONNECTION_ENCRYPTION_KEY in the deployment environment.</p>}
     {result && <section aria-live="polite" className="mt-6 space-y-4 rounded-2xl border bg-white p-5">
       <div className="flex flex-wrap items-center justify-between gap-2"><h2 className="text-lg font-semibold">Results</h2><span className="text-sm text-slate-500">{result.rowCount} rows · {result.remaining} questions remaining</span></div>
       <p className="text-sm text-slate-700">{result.summary}</p>
