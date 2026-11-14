@@ -9,6 +9,7 @@ import { UsageEventModel } from "@/db/models/usage-event.model";
 import { getUserPlan } from "@/services/billing/usage";
 import { assertSafeExternalHost, decodeExternalDbConfig } from "@/lib/external-database";
 import { toPublicError } from "@/lib/errors";
+import { validateMongoAnalyticsQuery } from "@/services/ai/query-validator.service";
 import { Client as PgClient } from "pg";
 import mysql from "mysql2/promise";
 import { MongoClient } from "mongodb";
@@ -163,6 +164,15 @@ export async function POST(request: Request) {
         if (!text) throw new Error("AI did not return a pipeline.");
         const generated = z.object({ collection: z.string().min(1).max(120), pipeline: z.array(z.record(z.unknown())).min(1).max(8), summary: z.string().max(500).default("Query completed.") }).parse(JSON.parse(text));
         if (!collections.includes(generated.collection)) throw new Error("Unknown collection.");
+        const validationSchema = {
+          databaseType: "mongodb" as const,
+          tables: schema.map((item: { collection: string; fields: Array<{ name: string; types: string[] }> }) => ({
+            name: item.collection,
+            columns: item.fields.map(field => ({ name: field.name, type: field.types.join("|") })),
+          })),
+        };
+        const validated = validateMongoAnalyticsQuery(JSON.stringify({ collection: generated.collection, pipeline: generated.pipeline }), validationSchema, 100);
+        generated.pipeline = validated.pipeline;
         const allowed = new Set(["$match", "$group", "$project", "$sort", "$limit", "$unwind", "$count", "$addFields", "$set", "$skip"]);
         for (const stage of generated.pipeline) {
           const keys = Object.keys(stage);
