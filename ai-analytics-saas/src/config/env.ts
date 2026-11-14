@@ -9,9 +9,27 @@ const envSchema = z.object({
   AUTH_EMAIL_SERVER: z.string().optional(),
   AUTH_EMAIL_FROM: z.string().email().optional(),
   MONGODB_URI: z.string().min(1).optional(),
-  MONGODB_DATABASE: z.string().min(1).refine(value => ![46, 47, 92, 34, 36, 42, 60, 62, 58, 124, 63].some(code => value.includes(String.fromCharCode(code))), "MONGODB_DATABASE contains an invalid MongoDB database-name character").optional(),
+  MONGODB_DATABASE: z.string().min(1).refine(
+    value => ![46, 47, 92, 34, 36, 42, 60, 62, 58, 124, 63].some(code => value.includes(String.fromCharCode(code))),
+    "MONGODB_DATABASE contains an invalid MongoDB database-name character",
+  ).optional(),
   OUTBOUND_DB_ALLOWED_HOSTS: z.string().optional(),
   ADMIN_EMAILS: z.string().optional(),
+}).superRefine((values, context) => {
+  if (Boolean(values.GOOGLE_CLIENT_ID) !== Boolean(values.GOOGLE_CLIENT_SECRET)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["GOOGLE_CLIENT_SECRET"],
+      message: "Configure both GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET.",
+    });
+  }
+  if (Boolean(values.AUTH_EMAIL_SERVER) !== Boolean(values.AUTH_EMAIL_FROM)) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["AUTH_EMAIL_SERVER"],
+      message: "Configure both AUTH_EMAIL_SERVER and AUTH_EMAIL_FROM.",
+    });
+  }
 });
 
 export const env = envSchema.parse({
@@ -26,11 +44,4 @@ export const env = envSchema.parse({
   MONGODB_DATABASE: process.env.MONGODB_DATABASE,
   OUTBOUND_DB_ALLOWED_HOSTS: process.env.OUTBOUND_DB_ALLOWED_HOSTS,
   ADMIN_EMAILS: process.env.ADMIN_EMAILS,
-}).superRefine((values, context) => {
-  if (Boolean(values.GOOGLE_CLIENT_ID) !== Boolean(values.GOOGLE_CLIENT_SECRET)) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ["GOOGLE_CLIENT_SECRET"], message: "Configure both GOOGLE_CLIENT_ID and GOOGLE_CLIENT_SECRET." });
-  }
-  if (Boolean(values.AUTH_EMAIL_SERVER) !== Boolean(values.AUTH_EMAIL_FROM)) {
-    context.addIssue({ code: z.ZodIssueCode.custom, path: ["AUTH_EMAIL_SERVER"], message: "Configure both AUTH_EMAIL_SERVER and AUTH_EMAIL_FROM." });
-  }
 });
