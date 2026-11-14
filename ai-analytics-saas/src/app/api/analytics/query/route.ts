@@ -271,7 +271,7 @@ export async function POST(request: Request) {
     const content = completion.choices[0]?.message.content;
     if (!content) throw new Error("AI did not return a query.");
     const generated = z.object({ sql: z.string().min(1).max(12000), summary: z.string().max(500).default("Query completed.") }).parse(JSON.parse(content));
-    const sql = validateReadOnlySql(generated.sql, config.type === "postgres" ? "postgresql" : "mysql", new Set(schema.map(row => String(row.table_name).toLowerCase())));
+    const sql = validateReadOnlySql(generated.sql, config.type === "postgres" ? "postgresql" : "mysql", schema, config.database);
     stage = "execute-sql-query";
     const result = await executeReadOnly(config, sql);
     stage = "save-query-usage";
