@@ -10,6 +10,8 @@ const subscriptionSchema = new mongoose.Schema({
   stripeEventCreated: { type: Number, min: 0 },
 }, { timestamps: true });
 
+subscriptionSchema.index({ stripeSubscriptionId: 1 }, { unique: true, sparse: true });
+
 export type Subscription = InferSchemaType<typeof subscriptionSchema>;
 export const SubscriptionModel: Model<Subscription> =
   (mongoose.models.Subscription as Model<Subscription> | undefined) ??
