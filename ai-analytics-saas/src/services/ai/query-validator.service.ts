@@ -106,8 +106,12 @@ export function validateMongoAnalyticsQuery(
 
   // Enforce a server-side result cap regardless of any model-provided $limit.
   const cap = Math.max(1, Math.min(Math.floor(maxRows), 500));
+  const requestedLimits = pipeline
+    .map((stage) => Number(stage.$limit))
+    .filter((value) => Number.isFinite(value) && value > 0);
+  const effectiveLimit = requestedLimits.length ? Math.min(cap, ...requestedLimits) : cap;
   const cappedPipeline = pipeline.filter((stage) => !("$limit" in stage));
-  cappedPipeline.push({ $limit: cap });
+  cappedPipeline.push({ $limit: effectiveLimit });
 
   return { collection: knownCollection.name, pipeline: cappedPipeline };
 }
