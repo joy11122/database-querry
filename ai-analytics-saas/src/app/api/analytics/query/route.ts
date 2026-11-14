@@ -95,9 +95,11 @@ export async function POST(request: Request) {
     if (!usageReservation) return NextResponse.json({ error: { code: "USAGE_LIMIT", message: "Your monthly query limit has been reached." } }, { status: 429 });
     const apiKey = process.env.OPENAI_API_KEY;
     stage = "decrypt-connection";
+    databaseType = connection.databaseType;
     const config = decodeExternalDbConfig(connection);
     databaseType = config.type;
     if (config.type === "mongodb") {
+      stage = "validate-mongodb-host";
       await assertSafeMongoUri(config.uri);
       const mongo = new MongoClient(config.uri, { serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 });
       try {
@@ -284,13 +286,15 @@ export async function POST(request: Request) {
     }
     const safe = toPublicError(error);
     if (safe.statusCode === 400) return NextResponse.json({ error: { code: safe.code, message: "Please enter a clear question and try again." } }, { status: 400 });
-    const diagnostic = error && typeof error === "object" ? error as { name?: unknown; code?: unknown; codeName?: unknown; status?: unknown; type?: unknown } : {};
+    const diagnostic = error && typeof error === "object" ? error as { name?: unknown; code?: unknown; codeName?: unknown; status?: unknown; type?: unknown; syscall?: unknown; errno?: unknown } : {};
     console.error("Analytics query failed", {
       stage,
       databaseType,
       errorName: typeof diagnostic.name === "string" ? diagnostic.name : "UnknownError",
       errorCode: typeof diagnostic.code === "string" || typeof diagnostic.code === "number" ? diagnostic.code : undefined,
       codeName: typeof diagnostic.codeName === "string" ? diagnostic.codeName : undefined,
+      syscall: typeof diagnostic.syscall === "string" ? diagnostic.syscall : undefined,
+      errno: typeof diagnostic.errno === "number" ? diagnostic.errno : undefined,
       httpStatus: typeof diagnostic.status === "number" ? diagnostic.status : undefined,
       errorType: typeof diagnostic.type === "string" ? diagnostic.type : undefined,
       durationMs: Date.now() - started,
