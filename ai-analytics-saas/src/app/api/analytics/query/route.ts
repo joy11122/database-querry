@@ -120,7 +120,9 @@ export async function POST(request: Request) {
             metadata: { connectionId: String(connection._id), dialect: "mongodb", queryMode: "deterministic" },
           });
           return NextResponse.json({
-            summary: simpleQuery.summary,
+            summary: simpleQuery.pipeline.some(item => "$count" in item)
+              ? `${simpleQuery.summary} ${Number(rows[0]?.count ?? 0)} records found.`
+              : simpleQuery.summary,
             sql: JSON.stringify({ collection: simpleQuery.collection, pipeline: simpleQuery.pipeline }, null, 2),
             columns,
             rows: rows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [
