@@ -31,9 +31,9 @@ function getSafeDatabaseDiagnostic(error: unknown) {
 }
 
 export async function GET() {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: { code: "UNAUTHORIZED", message: "Please sign in." } }, { status: 401 });
   try {
+    const session = await auth();
+    if (!session?.user?.id) return NextResponse.json({ error: { code: "UNAUTHORIZED", message: "Please sign in." } }, { status: 401 });
     await connectMongoose();
     const connections = await DBConnectionModel.find({ userId: session.user.id }).select("name databaseType host database isActive createdAt").sort({ createdAt: -1 }).lean().exec();
     return NextResponse.json({ connections: connections.map(item => ({ id: String(item._id), name: item.name, databaseType: item.databaseType, host: item.host, database: item.database, isActive: item.isActive, createdAt: item.createdAt })) });
@@ -44,19 +44,22 @@ export async function GET() {
 }
 
 export async function POST(request: Request) {
-  const session = await auth();
-  if (!session?.user?.id) return NextResponse.json({ error: { code: "UNAUTHORIZED", message: "Please sign in." } }, { status: 401 });
-  let stage = "parse-request";
+  let userId: string | undefined;
+  let stage = "authenticate";
   let databaseType: string | undefined;
   let connectionSlotReserved = false;
   try {
+    const session = await auth();
+    userId = session?.user?.id;
+    if (!userId) return NextResponse.json({ error: { code: "UNAUTHORIZED", message: "Please sign in." } }, { status: 401 });
+    stage = "parse-request";
     const body = connectionSchema.parse(await request.json());
     databaseType = body.type;
     stage = "connect-app-database";
     await connectMongoose();
-    const rateLimit = await consumeRateLimit(`connection-create:${session.user.id}`, 5, 10 * 60_000);
+    const rateLimit = await consumeRateLimit(`connection-create:${userId}`, 5, 10 * 60_000);
     if (!rateLimit.allowed) return NextResponse.json({ error: { code: "RATE_LIMITED", message: "Too many connection attempts. Please wait before trying again." } }, { status: 429, headers: { "Retry-After": String(rateLimit.retryAfterSeconds) } });
-    const plan = await getUserPlan(session.user.id);
+    const plan = await getUserPlan(userId);
     const config: ExternalDbConfig = body.type === "mongodb"
       ? { type: "mongodb", uri: body.uri, database: body.database }
       : { type: body.type, host: body.host, port: body.port, database: body.database, username: body.username, password: body.password, ssl: body.ssl };
@@ -65,19 +68,19 @@ export async function POST(request: Request) {
     stage = "inspect-external-schema";
     const schema = await inspectExternalDb(config);
     if (!schema.tables.length) return NextResponse.json({ error: { code: "EMPTY_SCHEMA", message: "Connected successfully, but no tables or collections were found in this database." } }, { status: 422 });
-    connectionSlotReserved = await reserveConnectionSlot(session.user.id, plan.connections);
+    connectionSlotReserved = await reserveConnectionSlot(userId, plan.connections);
     if (!connectionSlotReserved) return NextResponse.json({ error: { code: "CONNECTION_LIMIT", message: "Your plan has reached its active connection limit." } }, { status: 403 });
     stage = "save-connection";
     const host = body.type === "mongodb" ? new URL(body.uri).hostname : body.host;
-    const created = await DBConnectionModel.create({ userId: session.user.id, name: body.name, provider: body.type, databaseType: body.type, host, database: body.database, encryptedCredentials: encryptConnectionSecret(JSON.stringify(config)), isActive: true });
+    const created = await DBConnectionModel.create({ userId: userId, name: body.name, provider: body.type, databaseType: body.type, host, database: body.database, encryptedCredentials: encryptConnectionSecret(JSON.stringify(config)), isActive: true });
     connectionSlotReserved = false;
     return NextResponse.json({ connection: { id: String(created._id), name: created.name, databaseType: created.databaseType, host: created.host, database: created.database, isActive: created.isActive }, tables: schema.tables }, { status: 201 });
   } catch (error) {
-    if (connectionSlotReserved) {
-      try { await releaseConnectionSlot(session.user.id); }
+    if (connectionSlotReserved && userId) {
+      try { await releaseConnectionSlot(userId); }
       catch (releaseError) {
         console.error("Could not release connection slot", {
-          userId: session.user.id,
+          userId: userId,
           name: releaseError instanceof Error ? releaseError.name : "UnknownError",
         });
       }
