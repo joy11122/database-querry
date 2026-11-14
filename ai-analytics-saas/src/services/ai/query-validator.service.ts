@@ -57,6 +57,29 @@ function assertSafeValue(value: unknown, knownFields: Set<string>, depth = 0): v
   }
 }
 
+const QUERY_MATCH_OPERATORS = new Set([
+  "$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$in", "$nin",
+  "$and", "$or", "$nor", "$not", "$exists", "$type", "$size", "$all", "$elemMatch",
+]);
+
+function assertMatchShape(value: unknown, knownFields: Set<string>, parentPath = ""): void {
+  if (Array.isArray(value)) {
+    for (const item of value) assertMatchShape(item, knownFields, parentPath);
+    return;
+  }
+  if (!value || typeof value !== "object") return;
+  for (const [key, nested] of Object.entries(value as Record<string, unknown>)) {
+    if (key.startsWith("$")) {
+      if (!QUERY_MATCH_OPERATORS.has(key)) throw new Error("Query filter contains an unsupported query operator.");
+      assertMatchShape(nested, knownFields, parentPath);
+      continue;
+    }
+    const path = parentPath ? parentPath + "." + key : key;
+    if (!knownFields.has(path.split(".")[0])) throw new Error("Query filter references a field outside the inspected collection schema.");
+    assertMatchShape(nested, knownFields, path);
+  }
+}
+
 function assertStageShape(stage: Record<string, unknown>): void {
   const [operator, value] = Object.entries(stage)[0] ?? [];
   if (!operator) throw new Error("Aggregation stage is empty.");
@@ -134,13 +157,7 @@ export function validateMongoAnalyticsQuery(
     }
     assertStageShape(stage as Record<string, unknown>);
     assertSafeValue(stage, knownFields);
-    if (entries[0][0] === "$match") {
-      for (const field of Object.keys(entries[0][1] as Record<string, unknown>)) {
-        if (!field.startsWith("$") && !knownFields.has(field.split(".")[0])) {
-          throw new Error("Query filter references a field outside the inspected collection schema.");
-        }
-      }
-    }
+    if (entries[0][0] === "$match") assertMatchShape(entries[0][1], knownFields);
     if (entries[0][0] === "$sort") {
       for (const field of Object.keys(entries[0][1] as Record<string, unknown>)) {
         if (!knownFields.has(field.split(".")[0])) throw new Error("$sort references an unknown schema field.");
