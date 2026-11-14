@@ -290,6 +290,21 @@ function buildSimpleMongoQuery(
     };
   }
 
+  if (isSum) {
+    const numericFields = selected.fields.filter(field =>
+      /^(amount|total|price|revenue|sales|value|subtotal|grandtotal|totalamount|cost|balance)$/i.test(field.name.replace(/[._]/g, "")) &&
+      field.types.some(type => ["number", "int", "long", "double", "decimal"].includes(type))
+    );
+    if (numericFields.length !== 1) return null;
+    pipeline.push({ $group: { _id: null, total: { $sum: `${numericFields[0].name}` } } });
+    pipeline.push({ $project: { _id: 0, total: 1 } });
+    return {
+      collection: selected.collection,
+      pipeline,
+      summary: `Sum of ${numericFields[0].name} in ${selected.collection}.`,
+    };
+  }
+
   const requestedLimit = /\b(?:top|first|last|show|list|get)\s+(\d{1,3})\b/.exec(normalized);
   const limit = requestedLimit ? Math.min(100, Math.max(1, Number(requestedLimit[1]))) : 20;
   pipeline.push({ $limit: limit });
