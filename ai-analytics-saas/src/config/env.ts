@@ -9,7 +9,7 @@ const envSchema = z.object({
   AUTH_EMAIL_SERVER: z.string().optional(),
   AUTH_EMAIL_FROM: z.string().email().optional(),
   MONGODB_URI: z.string().min(1).optional(),
-  MONGODB_DATABASE: z.string().min(1).refine(value => !/[./\\"$*<>:|?\\0]/.test(value), "MONGODB_DATABASE contains an invalid MongoDB database-name character").optional(),
+  MONGODB_DATABASE: z.string().min(1).refine(value => ![".", "/", "\\\\", "\\\"", "$", "*", "<", ">", ":", "|", "?"].some(character => value.includes(character)), "MONGODB_DATABASE contains an invalid MongoDB database-name character").optional(),
   OUTBOUND_DB_ALLOWED_HOSTS: z.string().optional(),
   ADMIN_EMAILS: z.string().optional(),
 });
