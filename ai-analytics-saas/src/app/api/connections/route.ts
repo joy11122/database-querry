@@ -38,10 +38,6 @@ export async function GET() {
     const connections = await DBConnectionModel.find({ userId: session.user.id }).select("name databaseType host database isActive createdAt").sort({ createdAt: -1 }).lean().exec();
     return NextResponse.json({ connections: connections.map(item => ({ id: String(item._id), name: item.name, databaseType: item.databaseType, host: item.host, database: item.database, isActive: item.isActive, createdAt: item.createdAt })) });
   } catch (error) {
-    if (connectionSlotReserved) {
-      try { await releaseConnectionSlot(session.user.id); }
-      catch (releaseError) { console.error("Could not release connection slot", { userId: session.user.id, name: releaseError instanceof Error ? releaseError.name : "UnknownError" }); }
-    }
     const safe = toPublicError(error);
     return NextResponse.json({ error: { code: safe.code, message: safe.message } }, { status: safe.statusCode });
   }
@@ -77,6 +73,15 @@ export async function POST(request: Request) {
     connectionSlotReserved = false;
     return NextResponse.json({ connection: { id: String(created._id), name: created.name, databaseType: created.databaseType, host: created.host, database: created.database, isActive: created.isActive }, tables: schema.tables }, { status: 201 });
   } catch (error) {
+    if (connectionSlotReserved) {
+      try { await releaseConnectionSlot(session.user.id); }
+      catch (releaseError) {
+        console.error("Could not release connection slot", {
+          userId: session.user.id,
+          name: releaseError instanceof Error ? releaseError.name : "UnknownError",
+        });
+      }
+    }
     const safe = toPublicError(error);
     if (safe.statusCode !== 500) return NextResponse.json({ error: { code: safe.code, message: safe.message } }, { status: safe.statusCode });
     console.error("Connection creation failed", { stage, databaseType, ...getSafeDatabaseDiagnostic(error) });
