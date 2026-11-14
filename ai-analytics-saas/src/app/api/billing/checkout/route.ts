@@ -41,9 +41,14 @@ export async function POST(request: Request) {
 
     const response = await fetch("https://api.stripe.com/v1/checkout/sessions", {
       method: "POST",
-      headers: { Authorization: "Bearer " + secret, "Content-Type": "application/x-www-form-urlencoded" },
+      headers: {
+        Authorization: "Bearer " + secret,
+        "Content-Type": "application/x-www-form-urlencoded",
+        "Idempotency-Key": `checkout-${session.user.id}-${input.plan}`,
+      },
       body: form,
       cache: "no-store",
+      signal: AbortSignal.timeout(15000),
     });
     const payload = await response.json() as { url?: unknown; error?: { message?: string } };
     if (!response.ok || typeof payload.url !== "string" || !payload.url.startsWith("https://checkout.stripe.com/")) {
@@ -51,7 +56,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "Could not start secure checkout. Please try again." }, { status: 502 });
     }
     return NextResponse.json({ url: payload.url }, { headers: { "Cache-Control": "no-store" } });
-  } catch {
-    return NextResponse.json({ error: "Invalid checkout request." }, { status: 400 });
+  } catch (error) {
+    console.error("Checkout request failed", { name: error instanceof Error ? error.name : "UnknownError" });
+    return NextResponse.json({ error: "Could not start checkout. Please retry shortly." }, { status: 502 });
   }
 }
