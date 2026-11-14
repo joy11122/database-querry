@@ -15,7 +15,7 @@ function isInIpv4Range(address: string, network: string, prefix: number): boolea
 
 function isBlockedIpv4(address: string): boolean {
   const parts = address.split(".");
-  if (parts.length !== 4 || parts.some(part => !/^\\d{1,3}$/.test(part) || Number(part) > 255)) return true;
+  if (parts.length !== 4 || parts.some(part => !/^\d{1,3}$/.test(part) || Number(part) > 255)) return true;
   const blocked: Array<[string, number]> = [
     ["0.0.0.0", 8], ["10.0.0.0", 8], ["100.64.0.0", 10], ["127.0.0.0", 8],
     ["169.254.0.0", 16], ["172.16.0.0", 12], ["192.0.0.0", 24],
@@ -28,7 +28,7 @@ function isBlockedIpv4(address: string): boolean {
 
 function isBlockedIpv6(address: string): boolean {
   const normalized = address.toLowerCase().split("%")[0];
-  const mapped = normalized.match(/::ffff:(\\d+\\.\\d+\\.\\d+\\.\\d+)$/);
+  const mapped = normalized.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
   if (mapped) return isBlockedIpv4(mapped[1]);
   // Permit only globally-routable unicast (2000::/3); reject unspecified,
   // loopback, ULA, link-local, multicast, documentation and transition space.
@@ -72,7 +72,7 @@ async function assertPublicDnsHost(host: string): Promise<void> {
  * scoped *.domain suffix) and enforce provider/network-level egress controls.
  */
 export async function assertSafeExternalHost(host: string): Promise<void> {
-  const normalized = host.trim().replace(/^\\[|\\]$/g, "").toLowerCase().replace(/\\.$/, "");
+  const normalized = host.trim().replace(/^\[|\]$/g, "").toLowerCase().replace(/\.$/, "");
   if (!normalized || normalized === "localhost" || normalized.endsWith(".localhost") ||
       normalized.endsWith(".local") || normalized.endsWith(".internal") ||
       normalized.endsWith(".test") || !matchesHostAllowlist(normalized)) {
@@ -87,7 +87,7 @@ export async function assertSafeMongoUri(uri: string): Promise<void> {
     throw new Error("Only MongoDB connection URIs are supported.");
   }
   if (parsed.protocol === "mongodb+srv:") {
-    const hostname = parsed.hostname.toLowerCase().replace(/\\.$/, "");
+    const hostname = parsed.hostname.toLowerCase().replace(/\.$/, "");
     await assertSafeExternalHost(hostname);
     const service = parsed.searchParams.get("srvServiceName") || "mongodb";
     const records = await import("node:dns/promises").then(({ resolveSrv }) => resolveSrv(`_${service}._tcp.${hostname}`));
@@ -95,7 +95,7 @@ export async function assertSafeMongoUri(uri: string): Promise<void> {
     for (const record of records) await assertSafeExternalHost(record.name);
   } else {
     for (const host of parsed.host.split(",")) {
-      const hostname = host.trim().replace(/^.*@/, "").replace(/^\\[|\\]$/g, "").split(":")[0];
+      const hostname = host.trim().replace(/^.*@/, "").replace(/^\[|\]$/g, "").split(":")[0];
       await assertSafeExternalHost(hostname);
     }
   }
