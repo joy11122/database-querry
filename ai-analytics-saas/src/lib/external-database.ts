@@ -1,9 +1,59 @@
 import "server-only";
+import { lookup } from "node:dns/promises";
+import { isIP } from "node:net";
 import mysql from "mysql2/promise";
 import { Client as PgClient } from "pg";
 import { MongoClient } from "mongodb";
 import { decryptConnectionSecret } from "@/lib/connection-crypto";
 import type { DBConnection } from "@/db/models/db-connection.model";
+
+function isBlockedIpv4(address: string): boolean {
+  const parts = address.split(".").map(Number);
+  if (parts.length !== 4 || parts.some(part => !Number.isInteger(part) || part < 0 || part > 255)) return true;
+  const [a, b, c] = parts;
+  return a === 0 || a === 10 || a === 127 || a >= 224 ||
+    (a === 100 && b >= 64 && b <= 127) ||
+    (a === 169 && b === 254) ||
+    (a === 172 && b >= 16 && b <= 31) ||
+    (a === 192 && (b === 0 || b === 168)) ||
+    (a === 198 && (b === 18 || b === 19)) ||
+    (a === 192 && b === 88 && c === 99);
+}
+
+function isBlockedIpv6(address: string): boolean {
+  const normalized = address.toLowerCase().split("%")[0];
+  if (normalized === "::" || normalized === "::1" || normalized.startsWith("fc") ||
+      normalized.startsWith("fd") || /^fe[89ab]/.test(normalized) ||
+      normalized.startsWith("ff") || normalized.startsWith("2001:db8")) return true;
+  const mapped = normalized.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/);
+  return mapped ? isBlockedIpv4(mapped[1]) : false;
+}
+
+/**
+ * Reject loopback, private, link-local, multicast and reserved destinations.
+ * Deployments must also enforce outbound egress rules to mitigate DNS rebinding.
+ */
+export async function assertSafeExternalHost(host: string): Promise<void> {
+  const normalized = host.trim().replace(/^\[|\]$/g, "").toLowerCase();
+  if (!normalized || normalized === "localhost" || normalized.endsWith(".localhost") ||
+      normalized.endsWith(".local") || normalized.endsWith(".internal") ||
+      normalized.endsWith(".test")) {
+    throw new Error("This database host is not allowed.");
+  }
+  const version = isIP(normalized);
+  if (version === 4) {
+    if (isBlockedIpv4(normalized)) throw new Error("Private or reserved database hosts are not allowed.");
+    return;
+  }
+  if (version === 6) {
+    if (isBlockedIpv6(normalized)) throw new Error("Private or reserved database hosts are not allowed.");
+    return;
+  }
+  const addresses = await lookup(normalized, { all: true, verbatim: true });
+  if (!addresses.length || addresses.some(item => item.family === 4 ? isBlockedIpv4(item.address) : isBlockedIpv6(item.address))) {
+    throw new Error("Database host resolves to a private or reserved address.");
+  }
+}
 
 export type SqlDbConfig = {
   type: "postgres" | "mysql";
@@ -23,6 +73,8 @@ export function decodeExternalDbConfig(connection: Pick<DBConnection, "encrypted
 }
 
 export async function testExternalDb(config: ExternalDbConfig): Promise<void> {
+  const host = config.type === "mongodb" ? new URL(config.uri).hostname : config.host;
+  await assertSafeExternalHost(host);
   if (config.type === "mongodb") {
     const client = new MongoClient(config.uri, { serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 });
     try { await client.connect(); await client.db(config.database).command({ ping: 1 }); }
@@ -39,6 +91,8 @@ export async function testExternalDb(config: ExternalDbConfig): Promise<void> {
 }
 
 export async function inspectExternalDb(config: ExternalDbConfig): Promise<{ tables: { name: string; columns: string[] }[] }> {
+  const host = config.type === "mongodb" ? new URL(config.uri).hostname : config.host;
+  await assertSafeExternalHost(host);
   if (config.type === "mongodb") {
     const client = new MongoClient(config.uri, { serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 });
     try {
