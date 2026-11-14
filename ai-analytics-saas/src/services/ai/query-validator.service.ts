@@ -123,6 +123,7 @@ export function validateMongoAnalyticsQuery(
   if (candidate.pipeline.length > 20) throw new Error("Query has too many pipeline stages.");
 
   const knownFields = new Set(knownCollection.columns.map(column => column.name.split(".")[0]));
+  knownFields.add("_id");
   const pipeline: Record<string, unknown>[] = candidate.pipeline.map(stage => {
     if (!stage || typeof stage !== "object" || Array.isArray(stage)) {
       throw new Error("Each pipeline stage must be an object.");
