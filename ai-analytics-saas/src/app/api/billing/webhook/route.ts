@@ -31,9 +31,14 @@ export async function POST(request: Request) {
 
   try {
     const event = JSON.parse(payload) as {
+      id?: string;
       type?: string;
+      created?: number;
       data?: { object?: Record<string, unknown> };
     };
+    if (typeof event.created !== "number" || !Number.isFinite(event.created) || event.created <= 0) {
+      return NextResponse.json({ error: "Webhook event timestamp is invalid." }, { status: 400 });
+    }
     const object = event.data?.object;
     if (!object) return NextResponse.json({ received: true });
 
@@ -48,6 +53,9 @@ export async function POST(request: Request) {
       const existing = await SubscriptionModel.findOne({ stripeSubscriptionId: subscriptionId }).lean().exec();
       const resolvedUserId = userId || existing?.userId;
       const resolvedPlan = plan || existing?.plan;
+      if (existing?.stripeEventCreated && existing.stripeEventCreated > event.created) {
+        return NextResponse.json({ received: true, ignored: "stale_subscription_event" });
+      }
       if (!resolvedUserId || !resolvedPlan) {
         console.error("Stripe subscription event missing application metadata", { subscriptionId, eventType: event.type });
         return NextResponse.json({ error: "Subscription metadata is incomplete." }, { status: 400 });
@@ -64,13 +72,20 @@ export async function POST(request: Request) {
         ? new Date(object.current_period_end * 1000)
         : undefined;
       await SubscriptionModel.findOneAndUpdate(
-        { stripeSubscriptionId: subscriptionId },
+        {
+          stripeSubscriptionId: subscriptionId,
+          $or: [
+            { stripeEventCreated: { $exists: false } },
+            { stripeEventCreated: { $lte: event.created } },
+          ],
+        },
         { $set: {
           userId: resolvedUserId,
           plan: resolvedPlan,
           status,
           stripeCustomerId: customerId ?? existing?.stripeCustomerId,
           stripeSubscriptionId: subscriptionId,
+          stripeEventCreated: event.created,
           ...(periodEnd ? { currentPeriodEnd: periodEnd } : {}),
         } },
         { upsert: true, new: true, setDefaultsOnInsert: true },
