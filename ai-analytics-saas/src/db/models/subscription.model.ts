@@ -7,6 +7,7 @@ const subscriptionSchema = new mongoose.Schema({
   stripeCustomerId: { type: String },
   stripeSubscriptionId: { type: String },
   currentPeriodEnd: { type: Date },
+  stripeEventCreated: { type: Number, min: 0 },
 }, { timestamps: true });
 
 export type Subscription = InferSchemaType<typeof subscriptionSchema>;
