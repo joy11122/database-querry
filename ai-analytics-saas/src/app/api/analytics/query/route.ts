@@ -23,7 +23,7 @@ function unquoteSqlIdentifier(value: string): string {
     .replace(/""/g, '"').replace(/``/g, "`").replace(/\\]\\]/g, "]");
 }
 
-function validateReadOnlySql(raw: string, dialect: "postgresql" | "mysql", schema?: SqlSchemaRow[]): string {
+function validateReadOnlySql(raw: string, dialect: "postgresql" | "mysql", schema?: SqlSchemaRow[], currentDatabase?: string): string {
   const sql = raw.trim().replace(/;+\\s*$/, "");
   if (!sql || sql.includes(";") || sql.includes("--") || sql.includes("/*") || sql.includes("*/") || sql.length > 12000) throw new Error("The generated query is not a single statement.");
   if (/\\b(insert|update|delete|drop|alter|create|truncate|grant|revoke|copy|call|execute|into|outfile|load_file|information_schema|pg_catalog|mysql\\.user|sleep|benchmark)\\b/i.test(sql) || /\\b(pg_sleep|pg_read_file|pg_ls_dir|lo_import|lo_export|load_file|sleep|benchmark|get_lock|release_lock)\\s*\\(/i.test(sql) || /\\bfor\\s+(update|share)\\b|\\block\\s+in\\s+share\\s+mode\\b/i.test(sql)) throw new Error("Only read-only SELECT queries are allowed.");
@@ -49,9 +49,8 @@ function validateReadOnlySql(raw: string, dialect: "postgresql" | "mysql", schem
         const qualifier = unquoteSqlIdentifier(parts[parts.length - 2]);
         const expectedSchema = dialect === "postgresql" ? "public" : undefined;
         if (expectedSchema && qualifier.toLowerCase() !== expectedSchema) throw new Error("Query references a schema outside the inspected database.");
-        if (dialect === "mysql" && qualifier.toLowerCase() !== "current_database") {
-          const knownDb = schema[0] ? undefined : undefined;
-          void knownDb;
+        if (dialect === "mysql" && currentDatabase && qualifier.toLowerCase() !== currentDatabase.toLowerCase()) {
+          throw new Error("Query references a database outside the connected database.");
         }
       }
       const tableName = unquoteSqlIdentifier(parts.at(-1) ?? "").toLowerCase();
@@ -241,7 +240,7 @@ export async function POST(request: Request) {
     const simpleSql = buildSimpleSqlQuery(input.question, schema, config.type === "postgres" ? "postgresql" : "mysql");
     if (simpleSql) {
       stage = "execute-simple-sql-query";
-      const safeSql = validateReadOnlySql(simpleSql.sql, config.type === "postgres" ? "postgresql" : "mysql", schema);
+      const safeSql = validateReadOnlySql(simpleSql.sql, config.type === "postgres" ? "postgresql" : "mysql", schema, config.database);
       const result = await executeReadOnly(config, safeSql);
       stage = "save-query-usage";
       await UsageEventModel.create({ userId: session.user.id, kind: "query_success", createdAt: new Date(), durationMs: Date.now() - started, rowCount: result.rows.length, metadata: { connectionId: String(connection._id), dialect: config.type, queryMode: "deterministic" } });
