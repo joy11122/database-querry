@@ -102,15 +102,24 @@ export function buildAdvancedMongoQuery(question: string, schema: MongoCollectio
 
   if (isTopProduct) {
     const embedded = pickField(orders.fields, ["items", "products", "orderitems", "order_items", "lineitems", "line_items"]);
-    if (!embedded || !embedded.types.includes("array")) return null;
-    const productName = ["productname", "product_name", "name", "title"].find(name => schema.some(item => item.collection === orders.collection && item.fields.some(field => norm(field.name) === norm(embedded.name + "." + name))));
-    const itemQuantity = ["quantity", "qty", "units"].find(name => schema.some(item => item.collection === orders.collection && item.fields.some(field => norm(field.name) === norm(embedded.name + "." + name))));
-    const itemPrice = ["price", "unitprice", "unit_price"].find(name => schema.some(item => item.collection === orders.collection && item.fields.some(field => norm(field.name) === norm(embedded.name + "." + name))));
-    const productKey = ["productid", "product_id", "sku", "id"].find(name => schema.some(item => item.collection === orders.collection && item.fields.some(field => norm(field.name) === norm(embedded.name + "." + name))));
-    if (!productName && !productKey) return null;
-    const groupKey = productName ? "$" + embedded.name + "." + productName : "$" + embedded.name + "." + productKey;
-    const pipeline: Document[] = [{ $unwind: "$" + embedded.name }, { $group: { _id: groupKey, unitsSold: { $sum: itemQuantity ? "$" + embedded.name + "." + itemQuantity : 1 }, revenue: { $sum: itemPrice && itemQuantity ? { $multiply: ["$" + embedded.name + "." + itemPrice, "$" + embedded.name + "." + itemQuantity] } : 0 } } }, { $sort: { unitsSold: -1 } }, { $limit: 5 }];
-    return { collection: orders.collection, pipeline, summary: "Top five products ranked by units sold, using embedded order line items." };
+    if (embedded?.types.includes("array")) {
+      const productName = ["productname", "product_name", "name", "title"].find(name => schema.some(item => item.collection === orders.collection && item.fields.some(field => norm(field.name) === norm(embedded.name + "." + name))));
+      const itemQuantity = ["quantity", "qty", "units"].find(name => schema.some(item => item.collection === orders.collection && item.fields.some(field => norm(field.name) === norm(embedded.name + "." + name))));
+      const itemPrice = ["price", "unitprice", "unit_price"].find(name => schema.some(item => item.collection === orders.collection && item.fields.some(field => norm(field.name) === norm(embedded.name + "." + name))));
+      const productKey = ["productid", "product_id", "sku", "id"].find(name => schema.some(item => item.collection === orders.collection && item.fields.some(field => norm(field.name) === norm(embedded.name + "." + name))));
+      if (!productName && !productKey) return null;
+      const groupKey = productName ? "$" + embedded.name + "." + productName : "$" + embedded.name + "." + productKey;
+      const pipeline: Document[] = [{ $unwind: "$" + embedded.name }, { $group: { _id: groupKey, unitsSold: { $sum: itemQuantity ? "$" + embedded.name + "." + itemQuantity : 1 }, revenue: { $sum: itemPrice && itemQuantity ? { $multiply: ["$" + embedded.name + "." + itemPrice, "$" + embedded.name + "." + itemQuantity] } : 0 } } }, { $sort: { unitsSold: -1 } }, { $limit: 5 }];
+      return { collection: orders.collection, pipeline, summary: "Top five products ranked by units sold, using embedded order line items." };
+    }
+    if (!orderItems) return null;
+    const productFk = pickField(orderItems.fields, aliases.productId);
+    const quantity = pickField(orderItems.fields, aliases.quantity, true);
+    const productPk = products && pickField(products.fields, aliases.id);
+    if (!productFk) return null;
+    const pipeline: Document[] = [{ $group: { _id: "$" + productFk.name, unitsSold: { $sum: quantity ? "$" + quantity.name : 1 } } }, { $sort: { unitsSold: -1 } }, { $limit: 5 }];
+    if (products && productPk) pipeline.push({ $lookup: { from: products.collection, localField: "_id", foreignField: productPk.name, as: "product" } }, { $unwind: { path: "$product", preserveNullAndEmptyArrays: true } });
+    return { collection: orderItems.collection, pipeline, summary: "Top five products ranked by units sold from the order-items collection." };
   }
 
   if (isMonthly || isCompare) {
