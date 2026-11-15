@@ -121,6 +121,11 @@ export async function POST(request: Request) {
           });
         }
         const advancedQuery = buildAdvancedMongoQuery(input.question, schema);
+        if (advancedQuery) {
+          const advancedValidationSchema = { databaseType: "mongodb" as const, tables: schema.map((item: { collection: string; fields: Array<{ name: string; types: string[] }> }) => ({ name: item.collection, columns: item.fields.map(field => ({ name: field.name, type: field.types.join("|") })) })) };
+          const validatedAdvanced = validateMongoAnalyticsQuery(JSON.stringify(advancedQuery), advancedValidationSchema, 100);
+          advancedQuery.pipeline = validatedAdvanced.pipeline;
+        }
         const simpleQuery = advancedQuery ?? buildSimpleMongoQuery(input.question, schema, collections);
         if (simpleQuery) {
           stage = "execute-simple-mongodb-query";
