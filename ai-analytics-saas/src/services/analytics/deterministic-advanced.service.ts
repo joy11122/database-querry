@@ -127,6 +127,7 @@ export function buildAdvancedMongoQuery(question: string, schema: MongoCollectio
 
 export function buildAdvancedSqlQuery(question: string, schema: SqlSchemaRowLike[], dialect: "postgresql" | "mysql", now = new Date()): SqlPlan | null {
   const q = words(question);
+  const qid = (identifier: string) => dialect === "mysql" ? "`" + identifier.replace(/`/g, "``") + "`" : qid(identifier);
   const text = question.toLowerCase();
   const tables: SqlTable[] = [];
   for (const row of schema) {
@@ -161,31 +162,31 @@ export function buildAdvancedSqlQuery(question: string, schema: SqlSchemaRowLike
   const productName = products && pickSqlColumn(products.columns, aliases.name) || (items && pickSqlColumn(items.columns, aliases.name));
   if (isInactive) {
     if (!customers || !orders || !customerPk || !customerFk || !dateCol) return null;
-    return { sql: "SELECT c.* FROM " + quote(customers.name) + " c WHERE NOT EXISTS (SELECT 1 FROM " + quote(orders.name) + " o WHERE o." + quote(customerFk.name) + " = c." + quote(customerPk.name) + " AND o." + quote(dateCol.name) + " >= " + iso(bounds.cutoff) + ") LIMIT 100", summary: "Customers with no orders in the last 90 days (including customers with no order history)." };
+    return { sql: "SELECT c.* FROM " + qid(customers.name) + " c WHERE NOT EXISTS (SELECT 1 FROM " + qid(orders.name) + " o WHERE o." + qid(customerFk.name) + " = c." + qid(customerPk.name) + " AND o." + qid(dateCol.name) + " >= " + iso(bounds.cutoff) + ") LIMIT 100", summary: "Customers with no orders in the last 90 days (including customers with no order history)." };
   }
   if (!orders) return null;
   if (isCustomerRank || isRepeatCustomer) {
     if (!customerFk) return null;
-    const join = customers && customerPk ? " LEFT JOIN " + quote(customers.name) + " c ON c." + quote(customerPk.name) + " = o." + quote(customerFk.name) : "";
-    const label = customers && pickSqlColumn(customers.columns, aliases.name) ? ", c." + quote(pickSqlColumn(customers.columns, aliases.name)!.name) + " AS customer_name" : "";
+    const join = customers && customerPk ? " LEFT JOIN " + qid(customers.name) + " c ON c." + qid(customerPk.name) + " = o." + qid(customerFk.name) : "";
+    const label = customers && pickSqlColumn(customers.columns, aliases.name) ? ", c." + qid(pickSqlColumn(customers.columns, aliases.name)!.name) + " AS customer_name" : "";
     const having = isRepeatCustomer ? " HAVING COUNT(*) > 3" : "";
-    return { sql: "SELECT o." + quote(customerFk.name) + " AS customer_id" + label + ", COUNT(*) AS order_count" + (amountCol ? ", SUM(o." + quote(amountCol.name) + ") AS total_spent" : "") + " FROM " + quote(orders.name) + " o" + join + " GROUP BY o." + quote(customerFk.name) + (label ? ", c." + quote(pickSqlColumn(customers!.columns, aliases.name)!.name) : "") + having + " ORDER BY " + (isCustomerRank && amountCol ? "total_spent DESC, " : "") + "order_count DESC LIMIT 100", summary: isCustomerRank ? "Customers ranked by total purchase value and order count." : "Customers with more than three orders, ranked by order count." };
+    return { sql: "SELECT o." + qid(customerFk.name) + " AS customer_id" + label + ", COUNT(*) AS order_count" + (amountCol ? ", SUM(o." + qid(amountCol.name) + ") AS total_spent" : "") + " FROM " + qid(orders.name) + " o" + join + " GROUP BY o." + qid(customerFk.name) + (label ? ", c." + qid(pickSqlColumn(customers!.columns, aliases.name)!.name) : "") + having + " ORDER BY " + (isCustomerRank && amountCol ? "total_spent DESC, " : "") + "order_count DESC LIMIT 100", summary: isCustomerRank ? "Customers ranked by total purchase value and order count." : "Customers with more than three orders, ranked by order count." };
   }
   if (isTopProduct) {
     if (!items || !itemProductFk || !orderFk || !productName || !itemQty) return null;
     const orderPk = pickSqlColumn(orders.columns, aliases.id);
     if (!orderPk) return null;
-    const joinProduct = products && productPk ? " LEFT JOIN " + quote(products.name) + " p ON p." + quote(productPk.name) + " = i." + quote(itemProductFk.name) : "";
-    const productLabel = products && pickSqlColumn(products.columns, aliases.name) ? "p." + quote(pickSqlColumn(products.columns, aliases.name)!.name) : "i." + quote(productName.name);
-    const revenue = itemPrice ? ", SUM(i." + quote(itemPrice.name) + " * i." + quote(itemQty.name) + ") AS revenue" : "";
-    return { sql: "SELECT i." + quote(itemProductFk.name) + " AS product_id, " + productLabel + " AS product_name, SUM(i." + quote(itemQty.name) + ") AS units_sold" + revenue + " FROM " + quote(items.name) + " i JOIN " + quote(orders.name) + " o ON o." + quote(orderPk.name) + " = i." + quote(orderFk.name) + joinProduct + " GROUP BY i." + quote(itemProductFk.name) + ", " + productLabel + " ORDER BY units_sold DESC LIMIT 5", summary: "Top five products ranked by total units sold." };
+    const joinProduct = products && productPk ? " LEFT JOIN " + qid(products.name) + " p ON p." + qid(productPk.name) + " = i." + qid(itemProductFk.name) : "";
+    const productLabel = products && pickSqlColumn(products.columns, aliases.name) ? "p." + qid(pickSqlColumn(products.columns, aliases.name)!.name) : "i." + qid(productName.name);
+    const revenue = itemPrice ? ", SUM(i." + qid(itemPrice.name) + " * i." + qid(itemQty.name) + ") AS revenue" : "";
+    return { sql: "SELECT i." + qid(itemProductFk.name) + " AS product_id, " + productLabel + " AS product_name, SUM(i." + qid(itemQty.name) + ") AS units_sold" + revenue + " FROM " + qid(items.name) + " i JOIN " + qid(orders.name) + " o ON o." + qid(orderPk.name) + " = i." + qid(orderFk.name) + joinProduct + " GROUP BY i." + qid(itemProductFk.name) + ", " + productLabel + " ORDER BY units_sold DESC LIMIT 5", summary: "Top five products ranked by total units sold." };
   }
   if ((isMonthly || isCompare) && (!dateCol || !amountCol)) return null;
-  if (isCompare) return { sql: "SELECT CASE WHEN " + quote(dateCol!.name) + " >= " + iso(bounds.start) + " THEN 'current_month' ELSE 'previous_month' END AS period, SUM(" + quote(amountCol!.name) + ") AS revenue, COUNT(*) AS order_count FROM " + quote(orders.name) + " WHERE " + quote(dateCol!.name) + " >= " + iso(bounds.previous) + " AND " + quote(dateCol!.name) + " < " + iso(bounds.next) + " GROUP BY period ORDER BY period LIMIT 2", summary: "Revenue and order count for the current and previous calendar month." };
-  if (isMonthly) return { sql: "SELECT EXTRACT(YEAR FROM " + quote(dateCol!.name) + ") AS year, EXTRACT(MONTH FROM " + quote(dateCol!.name) + ") AS month, SUM(" + quote(amountCol!.name) + ") AS revenue, COUNT(*) AS order_count FROM " + quote(orders.name) + " GROUP BY year, month ORDER BY year, month LIMIT 100", summary: "Monthly revenue grouped by calendar year and month." };
+  if (isCompare) return { sql: "SELECT CASE WHEN " + qid(dateCol!.name) + " >= " + iso(bounds.start) + " THEN 'current_month' ELSE 'previous_month' END AS period, SUM(" + qid(amountCol!.name) + ") AS revenue, COUNT(*) AS order_count FROM " + qid(orders.name) + " WHERE " + qid(dateCol!.name) + " >= " + iso(bounds.previous) + " AND " + qid(dateCol!.name) + " < " + iso(bounds.next) + " GROUP BY period ORDER BY period LIMIT 2", summary: "Revenue and order count for the current and previous calendar month." };
+  if (isMonthly) return { sql: "SELECT EXTRACT(YEAR FROM " + qid(dateCol!.name) + ") AS year, EXTRACT(MONTH FROM " + qid(dateCol!.name) + ") AS month, SUM(" + qid(amountCol!.name) + ") AS revenue, COUNT(*) AS order_count FROM " + qid(orders.name) + " GROUP BY year, month ORDER BY year, month LIMIT 100", summary: "Monthly revenue grouped by calendar year and month." };
   if (isAverage) {
     if (!amountCol) return null;
-    return { sql: "SELECT AVG(" + quote(amountCol.name) + ") AS average_order_value, COUNT(*) AS order_count FROM " + quote(orders.name), summary: "Average order value across all orders." };
+    return { sql: "SELECT AVG(" + qid(amountCol.name) + ") AS average_order_value, COUNT(*) AS order_count FROM " + qid(orders.name), summary: "Average order value across all orders." };
   }
   return null;
 }
