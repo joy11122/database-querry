@@ -85,7 +85,7 @@ export function buildAdvancedMongoQuery(question: string, schema: MongoCollectio
       summary: "Customers with no orders in the last 90 days (including customers with no order history).",
     };
   }
-  if (!orders || !date && (isMonthly || isCompare)) return null;
+  if (!orders || ((isMonthly || isCompare) && (!date || !date.types.includes("date")))) return null;
   if ((isCustomerRank || isRepeatCustomer) && !customerKey) return null;
   if ((isMonthly || isCompare || isAverage) && !amount) return null;
 
