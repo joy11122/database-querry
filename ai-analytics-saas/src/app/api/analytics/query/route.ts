@@ -64,7 +64,10 @@ export async function POST(request: Request) {
     const config = decodeExternalDbConfig(connection);
     databaseType = config.type;
     if (config.type === "mongodb") {
-      await assertSafeExternalHost(new URL(config.uri).hostname);
+      stage = "parse-mongodb-host";
+      const mongoHost = new URL(config.uri).hostname;
+      stage = "validate-mongodb-host-dns";
+      await assertSafeExternalHost(mongoHost);
       const mongo = new MongoClient(config.uri, { serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 });
       try {
         stage = "connect-external-mongodb";
@@ -199,6 +202,7 @@ export async function POST(request: Request) {
         return NextResponse.json({ summary: generated.summary, sql: JSON.stringify({ collection: generated.collection, pipeline: generated.pipeline }, null, 2), columns, rows: rows.map(row => Object.fromEntries(Object.entries(row).map(([key, value]) => [key, value instanceof Date ? value.toISOString() : typeof value === "object" && value !== null ? JSON.stringify(value) : value]))), rowCount: rows.length, truncated: rows.length >= 100, remaining: Math.max(0, plan.remaining - 1) });
       } finally { await mongo.close(); }
     }
+    stage = "validate-sql-host-dns";
     await assertSafeExternalHost(config.host);
     stage = "inspect-sql-schema";
     const schema = config.type === "postgres" ? await getSchema(config, "postgresql") : await getSchema(config, "mysql");
@@ -250,18 +254,59 @@ export async function POST(request: Request) {
     }
     const safe = toPublicError(error);
     if (safe.statusCode === 400) return NextResponse.json({ error: { code: safe.code, message: "Please enter a clear question and try again." } }, { status: 400 });
-    const diagnostic = error && typeof error === "object" ? error as { name?: unknown; code?: unknown; codeName?: unknown; status?: unknown; type?: unknown } : {};
+    const diagnostic = error && typeof error === "object" ? error as { name?: unknown; code?: unknown; codeName?: unknown; status?: unknown; type?: unknown; cause?: unknown } : {};
+    const cause = diagnostic.cause && typeof diagnostic.cause === "object" ? diagnostic.cause as { code?: unknown; name?: unknown } : {};
+    const errorCode = typeof diagnostic.code === "string" || typeof diagnostic.code === "number" ? diagnostic.code : undefined;
+    const causeCode = typeof cause.code === "string" ? cause.code : undefined;
     console.error("Analytics query failed", {
       stage,
       databaseType,
       errorName: typeof diagnostic.name === "string" ? diagnostic.name : "UnknownError",
-      errorCode: typeof diagnostic.code === "string" || typeof diagnostic.code === "number" ? diagnostic.code : undefined,
+      errorCode,
+      causeName: typeof cause.name === "string" ? cause.name : undefined,
+      causeCode,
       codeName: typeof diagnostic.codeName === "string" ? diagnostic.codeName : undefined,
       httpStatus: typeof diagnostic.status === "number" ? diagnostic.status : undefined,
       errorType: typeof diagnostic.type === "string" ? diagnostic.type : undefined,
       durationMs: Date.now() - started,
     });
-    return NextResponse.json({ error: { code: "QUERY_FAILED", message: "The analytics query could not be completed. Check your connection and question, then try again." } }, { status: safe.statusCode >= 500 ? 500 : 400 });
+
+    let publicCode = "QUERY_FAILED";
+    let publicMessage = "The query failed unexpectedly. Please try again.";
+    let statusCode = 500;
+    if (stage === "decrypt-connection" || stage === "parse-mongodb-host") {
+      publicCode = "CONNECTION_CONFIG_INVALID";
+      publicMessage = "The saved database connection could not be read. Recheck the saved connection settings.";
+    } else if (stage === "validate-mongodb-host-dns" || stage === "validate-sql-host-dns") {
+      publicCode = "DATABASE_DNS_FAILED";
+      publicMessage = "The database hostname could not be resolved safely. Check the hostname and DNS configuration.";
+    } else if (stage === "connect-external-mongodb" || stage === "inspect-mongodb-collections" ||
+      stage === "execute-simple-mongodb-query" || stage === "execute-mongodb-aggregation" ||
+      stage === "inspect-sql-schema" || stage === "execute-simple-sql-query" || stage === "execute-sql-query") {
+      const authFailure = errorCode === 18 || causeCode === "18" ||
+        (typeof diagnostic.codeName === "string" && /Authentication/i.test(diagnostic.codeName));
+      const dnsFailure = ["ENOTFOUND", "EAI_AGAIN", "EBUSY"].includes(String(errorCode)) ||
+        ["ENOTFOUND", "EAI_AGAIN", "EBUSY"].includes(String(causeCode));
+      if (authFailure) {
+        publicCode = "DATABASE_AUTH_FAILED";
+        publicMessage = "Database authentication failed. Verify the database username and password.";
+        statusCode = 400;
+      } else if (dnsFailure) {
+        publicCode = "DATABASE_DNS_FAILED";
+        publicMessage = "The database hostname could not be resolved. Check the cluster hostname and DNS settings.";
+      } else {
+        publicCode = "DATABASE_CONNECTION_FAILED";
+        publicMessage = "Could not connect to the database. Check its network access rules, credentials and connection status.";
+      }
+    } else if (stage === "generate-mongodb-aggregation" || stage === "generate-sql-query") {
+      publicCode = "AI_QUERY_GENERATION_FAILED";
+      publicMessage = "AI could not generate a query. Check the AI provider configuration and try a clearer question.";
+      statusCode = 502;
+    } else if (stage === "save-query-usage" || stage === "connect-app-database" || stage === "load-plan-and-connection") {
+      publicCode = "APP_SERVICE_FAILED";
+      publicMessage = "The analytics service is temporarily unavailable. Please try again shortly.";
+    }
+    return NextResponse.json({ error: { code: publicCode, message: publicMessage } }, { status: statusCode });
   }
 }
 
