@@ -21,7 +21,7 @@ const aliases = {
   price: ["unitprice", "unit_price", "price", "rate", "sellingprice", "selling_price"],
   name: ["name", "productname", "product_name", "title", "customername", "customer_name"],
   email: ["email", "emailaddress", "email_address"],
-  id: ["_id", "id", "customerid", "customer_id", "userid", "user_id"],
+  id: ["_id", "id", "customerid", "customer_id", "userid", "user_id", "orderid", "order_id", "productid", "product_id"],
 };
 
 function norm(value: string): string { return value.toLowerCase().replace(/[^a-z0-9]/g, ""); }
@@ -106,7 +106,9 @@ export function buildAdvancedMongoQuery(question: string, schema: MongoCollectio
     const productName = ["productname", "product_name", "name", "title"].find(name => schema.some(item => item.collection === orders.collection && item.fields.some(field => norm(field.name) === norm(embedded.name + "." + name))));
     const itemQuantity = ["quantity", "qty", "units"].find(name => schema.some(item => item.collection === orders.collection && item.fields.some(field => norm(field.name) === norm(embedded.name + "." + name))));
     const itemPrice = ["price", "unitprice", "unit_price"].find(name => schema.some(item => item.collection === orders.collection && item.fields.some(field => norm(field.name) === norm(embedded.name + "." + name))));
-    const groupKey = productName ? "$" + embedded.name + "." + productName : "$" + embedded.name + ".productId";
+    const productKey = ["productid", "product_id", "sku", "id"].find(name => schema.some(item => item.collection === orders.collection && item.fields.some(field => norm(field.name) === norm(embedded.name + "." + name))));
+    if (!productName && !productKey) return null;
+    const groupKey = productName ? "$" + embedded.name + "." + productName : "$" + embedded.name + "." + productKey;
     const pipeline: Document[] = [{ $unwind: "$" + embedded.name }, { $group: { _id: groupKey, unitsSold: { $sum: itemQuantity ? "$" + embedded.name + "." + itemQuantity : 1 }, revenue: { $sum: itemPrice && itemQuantity ? { $multiply: ["$" + embedded.name + "." + itemPrice, "$" + embedded.name + "." + itemQuantity] } : 0 } } }, { $sort: { unitsSold: -1 } }, { $limit: 5 }];
     return { collection: orders.collection, pipeline, summary: "Top five products ranked by units sold, using embedded order line items." };
   }
@@ -179,8 +181,8 @@ export function buildAdvancedSqlQuery(question: string, schema: SqlSchemaRowLike
     return { sql: "SELECT i." + quote(itemProductFk.name) + " AS product_id, " + productLabel + " AS product_name, SUM(i." + quote(itemQty.name) + ") AS units_sold" + revenue + " FROM " + quote(items.name) + " i JOIN " + quote(orders.name) + " o ON o." + quote(orderPk.name) + " = i." + quote(orderFk.name) + joinProduct + " GROUP BY i." + quote(itemProductFk.name) + ", " + productLabel + " ORDER BY units_sold DESC LIMIT 5", summary: "Top five products ranked by total units sold." };
   }
   if ((isMonthly || isCompare) && (!dateCol || !amountCol)) return null;
-  if (isMonthly) return { sql: "SELECT EXTRACT(YEAR FROM " + quote(dateCol!.name) + ") AS year, EXTRACT(MONTH FROM " + quote(dateCol!.name) + ") AS month, SUM(" + quote(amountCol!.name) + ") AS revenue, COUNT(*) AS order_count FROM " + quote(orders.name) + " GROUP BY year, month ORDER BY year, month LIMIT 100", summary: "Monthly revenue grouped by calendar year and month." };
   if (isCompare) return { sql: "SELECT CASE WHEN " + quote(dateCol!.name) + " >= " + iso(bounds.start) + " THEN 'current_month' ELSE 'previous_month' END AS period, SUM(" + quote(amountCol!.name) + ") AS revenue, COUNT(*) AS order_count FROM " + quote(orders.name) + " WHERE " + quote(dateCol!.name) + " >= " + iso(bounds.previous) + " AND " + quote(dateCol!.name) + " < " + iso(bounds.next) + " GROUP BY period ORDER BY period LIMIT 2", summary: "Revenue and order count for the current and previous calendar month." };
+  if (isMonthly) return { sql: "SELECT EXTRACT(YEAR FROM " + quote(dateCol!.name) + ") AS year, EXTRACT(MONTH FROM " + quote(dateCol!.name) + ") AS month, SUM(" + quote(amountCol!.name) + ") AS revenue, COUNT(*) AS order_count FROM " + quote(orders.name) + " GROUP BY year, month ORDER BY year, month LIMIT 100", summary: "Monthly revenue grouped by calendar year and month." };
   if (isAverage) {
     if (!amountCol) return null;
     return { sql: "SELECT AVG(" + quote(amountCol.name) + ") AS average_order_value, COUNT(*) AS order_count FROM " + quote(orders.name), summary: "Average order value across all orders." };
