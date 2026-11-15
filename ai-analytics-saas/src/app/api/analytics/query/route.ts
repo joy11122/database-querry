@@ -96,6 +96,7 @@ export async function POST(request: Request) {
               const type = nested === null ? "null"
                 : nested instanceof Date ? "date"
                 : Array.isArray(nested) ? "array"
+                : typeof nested === "object" && nested !== null && ["Decimal128", "Int32", "Long", "Double"].includes(String((nested as { _bsontype?: unknown })._bsontype)) ? "decimal"
                 : typeof nested === "object" ? "object"
                 : typeof nested;
               const types = fields.get(field) ?? new Set<string>();
