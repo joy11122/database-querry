@@ -127,7 +127,7 @@ export function buildAdvancedMongoQuery(question: string, schema: MongoCollectio
 
 export function buildAdvancedSqlQuery(question: string, schema: SqlSchemaRowLike[], dialect: "postgresql" | "mysql", now = new Date()): SqlPlan | null {
   const q = words(question);
-  const qid = (identifier: string) => dialect === "mysql" ? "`" + identifier.replace(/`/g, "``") + "`" : qid(identifier);
+  const qid = (identifier: string) => dialect === "mysql" ? "`" + identifier.replace(/`/g, "``") + "`" : quote(identifier);
   const text = question.toLowerCase();
   const tables: SqlTable[] = [];
   for (const row of schema) {
