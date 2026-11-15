@@ -161,7 +161,7 @@ export function buildAdvancedSqlQuery(question: string, schema: SqlSchemaRowLike
   const productPk = products && pickSqlColumn(products.columns, aliases.id);
   const productName = products && pickSqlColumn(products.columns, aliases.name) || (items && pickSqlColumn(items.columns, aliases.name));
   if (isInactive) {
-    if (!customers || !orders || !customerPk || !customerFk || !dateCol) return null;
+    if (!customers || !orders || !customerPk || !customerFk || !dateCol || !/date|time/i.test(dateCol.type)) return null;
     return { sql: "SELECT c.* FROM " + qid(customers.name) + " c WHERE NOT EXISTS (SELECT 1 FROM " + qid(orders.name) + " o WHERE o." + qid(customerFk.name) + " = c." + qid(customerPk.name) + " AND o." + qid(dateCol.name) + " >= " + iso(bounds.cutoff) + ") LIMIT 100", summary: "Customers with no orders in the last 90 days (including customers with no order history)." };
   }
   if (!orders) return null;
@@ -181,7 +181,7 @@ export function buildAdvancedSqlQuery(question: string, schema: SqlSchemaRowLike
     const revenue = itemPrice ? ", SUM(i." + qid(itemPrice.name) + " * i." + qid(itemQty.name) + ") AS revenue" : "";
     return { sql: "SELECT i." + qid(itemProductFk.name) + " AS product_id, " + productLabel + " AS product_name, SUM(i." + qid(itemQty.name) + ") AS units_sold" + revenue + " FROM " + qid(items.name) + " i JOIN " + qid(orders.name) + " o ON o." + qid(orderPk.name) + " = i." + qid(orderFk.name) + joinProduct + " GROUP BY i." + qid(itemProductFk.name) + ", " + productLabel + " ORDER BY units_sold DESC LIMIT 5", summary: "Top five products ranked by total units sold." };
   }
-  if ((isMonthly || isCompare) && (!dateCol || !amountCol)) return null;
+  if ((isMonthly || isCompare) && (!dateCol || !/date|time/i.test(dateCol.type) || !amountCol)) return null;
   if (isCompare) return { sql: "SELECT CASE WHEN " + qid(dateCol!.name) + " >= " + iso(bounds.start) + " THEN 'current_month' ELSE 'previous_month' END AS period, SUM(" + qid(amountCol!.name) + ") AS revenue, COUNT(*) AS order_count FROM " + qid(orders.name) + " WHERE " + qid(dateCol!.name) + " >= " + iso(bounds.previous) + " AND " + qid(dateCol!.name) + " < " + iso(bounds.next) + " GROUP BY period ORDER BY period LIMIT 2", summary: "Revenue and order count for the current and previous calendar month." };
   if (isMonthly) return { sql: "SELECT EXTRACT(YEAR FROM " + qid(dateCol!.name) + ") AS year, EXTRACT(MONTH FROM " + qid(dateCol!.name) + ") AS month, SUM(" + qid(amountCol!.name) + ") AS revenue, COUNT(*) AS order_count FROM " + qid(orders.name) + " GROUP BY year, month ORDER BY year, month LIMIT 100", summary: "Monthly revenue grouped by calendar year and month." };
   if (isAverage) {
