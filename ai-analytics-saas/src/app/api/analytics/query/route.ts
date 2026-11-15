@@ -329,7 +329,7 @@ function buildSimpleMongoQuery(
 ): SimpleMongoPlan | null {
   const normalized = question.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const words = new Set(normalized.split(/\s+/).filter(Boolean));
-  const explicitCount = /(?:^|\\s)(?:how many|count|number of|total number of)(?:\\s|$)/.test(normalized);
+  const explicitCount = normalized.includes("how many") || normalized.includes("number of") || words.has("count");
   const asksTotal = words.has("total") || words.has("sum");
   const isList = /show|list|get|find|display|fetch|what are|which/.test(normalized);
   if (!explicitCount && !asksTotal && !isList) return null;
@@ -411,7 +411,7 @@ type SimpleSqlPlan = { sql: string; summary: string; isCount: boolean; limit: nu
 function buildSimpleSqlQuery(question: string, schema: SqlSchemaRow[], dialect: "postgresql" | "mysql"): SimpleSqlPlan | null {
   const normalized = question.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const words = new Set(normalized.split(/\s+/).filter(Boolean));
-  const explicitCount = /(?:^|\\s)(?:how many|count|number of|total number of)(?:\\s|$)/.test(normalized);
+  const explicitCount = normalized.includes("how many") || normalized.includes("number of") || words.has("count");
   const asksTotal = words.has("total") || words.has("sum");
   const isList = /show|list|get|find|display|fetch|what are|which/.test(normalized);
   if (!explicitCount && !isList && !asksTotal) return null;
