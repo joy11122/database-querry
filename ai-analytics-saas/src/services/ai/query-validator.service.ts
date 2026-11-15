@@ -17,6 +17,7 @@ const ALLOWED_STAGES = new Set([
   "$addFields",
   "$set",
   "$unset",
+  "$lookup",
 ]);
 const ALLOWED_EXPRESSION_OPERATORS = new Set([
   "$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$in", "$nin", "$and", "$or", "$nor", "$not",
@@ -32,7 +33,6 @@ const FORBIDDEN_KEYS = new Set([
   "$where",
   "$function",
   "$accumulator",
-  "$lookup",
   "$unionWith",
   "$graphLookup",
   "$changeStream",
@@ -103,6 +103,18 @@ export function validateMongoAnalyticsQuery(
     assertSafeValue(stage);
     return stage as Record<string, unknown>;
   });
+
+  for (const stage of pipeline) {
+    if ("$lookup" in stage) {
+      const lookup = stage.$lookup as Record<string, unknown>;
+      if (!lookup || typeof lookup.from !== "string" || !schema.tables.some(table => table.name === lookup.from)) {
+        throw new Error("Lookup references a collection outside the connected database schema.");
+      }
+      if (typeof lookup.localField !== "string" || typeof lookup.foreignField !== "string" || typeof lookup.as !== "string") {
+        throw new Error("Only equality lookups with known collection names are supported.");
+      }
+    }
+  }
 
   // Enforce a server-side result cap regardless of any model-provided $limit.
   const cap = Math.max(1, Math.min(Math.floor(maxRows), 500));
