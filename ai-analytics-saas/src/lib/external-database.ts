@@ -1,5 +1,5 @@
 import "server-only";
-import { lookup } from "node:dns/promises";
+import { lookup, resolveSrv } from "node:dns/promises";
 import { isIP } from "node:net";
 import mysql from "mysql2/promise";
 import { Client as PgClient } from "pg";
@@ -33,7 +33,7 @@ function isBlockedIpv6(address: string): boolean {
  * Reject loopback, private, link-local, multicast and reserved destinations.
  * Deployments must also enforce outbound egress rules to mitigate DNS rebinding.
  */
-export async function assertSafeExternalHost(host: string): Promise<void> {
+export async function assertSafeExternalHost(host: string, options: { srv?: boolean } = {}): Promise<void> {
   const normalized = host.trim().replace(/^\[|\]$/g, "").toLowerCase();
   if (!normalized || normalized === "localhost" || normalized.endsWith(".localhost") ||
       normalized.endsWith(".local") || normalized.endsWith(".internal") ||
@@ -49,9 +49,32 @@ export async function assertSafeExternalHost(host: string): Promise<void> {
     if (isBlockedIpv6(normalized)) throw new Error("Private or reserved database hosts are not allowed.");
     return;
   }
-  const addresses = await lookup(normalized, { all: true, verbatim: true });
-  if (!addresses.length || addresses.some(item => item.family === 4 ? isBlockedIpv4(item.address) : isBlockedIpv6(item.address))) {
-    throw new Error("Database host resolves to a private or reserved address.");
+  // Atlas mongodb+srv hosts are discovered through SRV records. The SRV
+  // root hostname may not have an A/AAAA record, so validate every SRV target
+  // instead of incorrectly resolving the root as a regular host.
+  const targets = options.srv
+    ? (await resolveSrv(`_mongodb._tcp.${normalized}`)).map(record => record.name.replace(/\\.$/, ""))
+    : [normalized];
+
+  if (!targets.length) throw new Error("Database host has no DNS records.");
+
+  for (const target of targets) {
+    if (!target || target === normalized && options.srv) {
+      throw new Error("Database SRV record contains an invalid target.");
+    }
+    const targetVersion = isIP(target);
+    if (targetVersion === 4) {
+      if (isBlockedIpv4(target)) throw new Error("Database host resolves to a private or reserved address.");
+      continue;
+    }
+    if (targetVersion === 6) {
+      if (isBlockedIpv6(target)) throw new Error("Database host resolves to a private or reserved address.");
+      continue;
+    }
+    const addresses = await lookup(target, { all: true, verbatim: true });
+    if (!addresses.length || addresses.some(item => item.family === 4 ? isBlockedIpv4(item.address) : isBlockedIpv6(item.address))) {
+      throw new Error("Database host resolves to a private or reserved address.");
+    }
   }
 }
 
@@ -74,7 +97,7 @@ export function decodeExternalDbConfig(connection: Pick<DBConnection, "encrypted
 
 export async function testExternalDb(config: ExternalDbConfig): Promise<void> {
   const host = config.type === "mongodb" ? new URL(config.uri).hostname : config.host;
-  await assertSafeExternalHost(host);
+  await assertSafeExternalHost(host, { srv: config.type === "mongodb" && config.uri.startsWith("mongodb+srv://") });
   if (config.type === "mongodb") {
     const client = new MongoClient(config.uri, { serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 });
     try { await client.connect(); await client.db(config.database).command({ ping: 1 }); }
