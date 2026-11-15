@@ -10,6 +10,7 @@ import { consumeRateLimit, getUserPlan, releaseQueryUsage, reserveQueryUsage } f
 import { assertSafeExternalHost, decodeExternalDbConfig } from "@/lib/external-database";
 import { toPublicError } from "@/lib/errors";
 import { validateMongoAnalyticsQuery } from "@/services/ai/query-validator.service";
+import { buildAdvancedMongoQuery, buildAdvancedSqlQuery } from "@/services/analytics/deterministic-advanced.service";
 import { Client as PgClient } from "pg";
 import mysql from "mysql2/promise";
 import { MongoClient } from "mongodb";
@@ -119,7 +120,8 @@ export async function POST(request: Request) {
             })),
           });
         }
-        const simpleQuery = buildSimpleMongoQuery(input.question, schema, collections);
+        const advancedQuery = buildAdvancedMongoQuery(input.question, schema);
+        const simpleQuery = advancedQuery ?? buildSimpleMongoQuery(input.question, schema, collections);
         if (simpleQuery) {
           stage = "execute-simple-mongodb-query";
           const rows = await db.collection(simpleQuery.collection).aggregate(simpleQuery.pipeline, {
@@ -206,7 +208,17 @@ export async function POST(request: Request) {
     await assertSafeExternalHost(config.host);
     stage = "inspect-sql-schema";
     const schema = config.type === "postgres" ? await getSchema(config, "postgresql") : await getSchema(config, "mysql");
-    const simpleSql = buildSimpleSqlQuery(input.question, schema, config.type === "postgres" ? "postgresql" : "mysql");
+    const advancedSql = buildAdvancedSqlQuery(input.question, schema, config.type === "postgres" ? "postgresql" : "mysql");
+    const simpleSql = advancedSql ? null : buildSimpleSqlQuery(input.question, schema, config.type === "postgres" ? "postgresql" : "mysql");
+    if (advancedSql) {
+      stage = "execute-advanced-sql-query";
+      const safeSql = validateReadOnlySql(advancedSql.sql, config.type === "postgres" ? "postgresql" : "mysql", new Set(schema.map(row => String(row.table_name).toLowerCase())));
+      const result = await executeReadOnly(config, safeSql);
+      stage = "save-query-usage";
+      await UsageEventModel.create({ userId: session.user.id, kind: "query_success", createdAt: new Date(), durationMs: Date.now() - started, rowCount: result.rows.length, metadata: { connectionId: String(connection._id), dialect: config.type, queryMode: "deterministic-advanced" } });
+      usageCommitted = true;
+      return NextResponse.json({ summary: advancedSql.summary, sql: safeSql, columns: result.columns, rows: result.rows, rowCount: result.rows.length, truncated: result.rows.length >= 100, remaining: Math.max(0, plan.remaining - 1), queryMode: "deterministic" });
+    }
     if (simpleSql) {
       stage = "execute-simple-sql-query";
       const safeSql = validateReadOnlySql(simpleSql.sql, config.type === "postgres" ? "postgresql" : "mysql", new Set(schema.map(row => String(row.table_name).toLowerCase())));
@@ -281,7 +293,7 @@ export async function POST(request: Request) {
       publicCode = "DATABASE_DNS_FAILED";
       publicMessage = "The database hostname could not be resolved safely. Check the hostname and DNS configuration.";
     } else if (stage === "connect-external-mongodb" || stage === "inspect-mongodb-collections" ||
-      stage === "execute-simple-mongodb-query" || stage === "execute-mongodb-aggregation" ||
+      stage === "execute-simple-mongodb-query" || stage === "execute-mongodb-aggregation" || stage === "execute-advanced-sql-query" ||
       stage === "inspect-sql-schema" || stage === "execute-simple-sql-query" || stage === "execute-sql-query") {
       const authFailure = errorCode === 18 || causeCode === "18" ||
         (typeof diagnostic.codeName === "string" && /Authentication/i.test(diagnostic.codeName));
