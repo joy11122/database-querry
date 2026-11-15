@@ -53,7 +53,7 @@ export async function assertSafeExternalHost(host: string, options: { srv?: bool
   // root hostname may not have an A/AAAA record, so validate every SRV target
   // instead of incorrectly resolving the root as a regular host.
   const targets = options.srv
-    ? (await resolveSrv(`_mongodb._tcp.${normalized}`)).map(record => record.name.replace(/\\.$/, ""))
+    ? (await resolveSrv(`_mongodb._tcp.${normalized}`)).map(record => record.name.replace(/\.$/, ""))
     : [normalized];
 
   if (!targets.length) throw new Error("Database host has no DNS records.");
