@@ -115,7 +115,7 @@ export async function testExternalDb(config: ExternalDbConfig): Promise<void> {
 
 export async function inspectExternalDb(config: ExternalDbConfig): Promise<{ tables: { name: string; columns: string[] }[] }> {
   const host = config.type === "mongodb" ? new URL(config.uri).hostname : config.host;
-  await assertSafeExternalHost(host);
+  await assertSafeExternalHost(host, { srv: config.type === "mongodb" && config.uri.startsWith("mongodb+srv://") });
   if (config.type === "mongodb") {
     const client = new MongoClient(config.uri, { serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 });
     try {
