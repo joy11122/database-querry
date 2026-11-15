@@ -329,8 +329,8 @@ function buildSimpleMongoQuery(
 ): SimpleMongoPlan | null {
   const normalized = question.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const words = new Set(normalized.split(/\s+/).filter(Boolean));
-  const explicitCount = /how many|count|number of|total number of/.test(normalized);
-  const asksTotal = /total|sum/.test(normalized);
+  const explicitCount = /(?:^|\\s)(?:how many|count|number of|total number of)(?:\\s|$)/.test(normalized);
+  const asksTotal = words.has("total") || words.has("sum");
   const isList = /show|list|get|find|display|fetch|what are|which/.test(normalized);
   if (!explicitCount && !asksTotal && !isList) return null;
 
@@ -354,8 +354,8 @@ function buildSimpleMongoQuery(
     const singular = word.endsWith("s") ? word.slice(0, -1) : word;
     return words.has(word) || words.has(singular);
   });
-  const isCount = explicitCount || (/total/.test(normalized) && asksForSelectedCollection);
-  const isSum = /(sum|total)/.test(normalized) && !isCount;
+  const isCount = explicitCount || (words.has("total") && asksForSelectedCollection);
+  const isSum = (words.has("sum") || words.has("total")) && !isCount;
   const wantsAvailability = /available|availability|active|enabled|in stock/.test(normalized);
   const pipeline: import("mongodb").Document[] = [];
   if (wantsAvailability) {
@@ -411,8 +411,8 @@ type SimpleSqlPlan = { sql: string; summary: string; isCount: boolean; limit: nu
 function buildSimpleSqlQuery(question: string, schema: SqlSchemaRow[], dialect: "postgresql" | "mysql"): SimpleSqlPlan | null {
   const normalized = question.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const words = new Set(normalized.split(/\s+/).filter(Boolean));
-  const explicitCount = /how many|count|number of|total number of/.test(normalized);
-  const asksTotal = /total|sum/.test(normalized);
+  const explicitCount = /(?:^|\\s)(?:how many|count|number of|total number of)(?:\\s|$)/.test(normalized);
+  const asksTotal = words.has("total") || words.has("sum");
   const isList = /show|list|get|find|display|fetch|what are|which/.test(normalized);
   if (!explicitCount && !isList && !asksTotal) return null;
   const tables = new Map<string, { columns: Array<{ name: string; type: string }> }>();
@@ -433,8 +433,8 @@ function buildSimpleSqlQuery(question: string, schema: SqlSchemaRow[], dialect: 
     const singular = word.endsWith("s") ? word.slice(0, -1) : word;
     return words.has(word) || words.has(singular);
   });
-  const isCount = explicitCount || (/total/.test(normalized) && asksForSelectedTable);
-  const isSum = /(sum|total)/.test(normalized) && !isCount;
+  const isCount = explicitCount || (words.has("total") && asksForSelectedTable);
+  const isSum = (words.has("sum") || words.has("total")) && !isCount;
   const quote = (identifier: string) => dialect === "mysql" ? "`" + identifier.replace(/`/g, "``") + "`" : "\"" + identifier.replace(/\"/g, "\"\"") + "\"";
   const tableName = quote(selected.name);
   const wantsAvailability = /\b(available|availability|active|enabled|in stock)\b/.test(normalized);
