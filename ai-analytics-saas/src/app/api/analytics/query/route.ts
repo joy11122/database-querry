@@ -329,10 +329,10 @@ function buildSimpleMongoQuery(
 ): SimpleMongoPlan | null {
   const normalized = question.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const words = new Set(normalized.split(/\s+/).filter(Boolean));
-  const isCount = /\b(how many|count|number of|total number of)\b/.test(normalized);
-  const isSum = /\b(total|sum)\b/.test(normalized) && !isCount;
-  const isList = /\b(show|list|get|find|display|fetch|what are|which)\b/.test(normalized);
-  if (!isCount && !isSum && !isList) return null;
+  const explicitCount = /how many|count|number of|total number of/.test(normalized);
+  const asksTotal = /total|sum/.test(normalized);
+  const isList = /show|list|get|find|display|fetch|what are|which/.test(normalized);
+  if (!explicitCount && !asksTotal && !isList) return null;
 
   const ranked = schema
     .filter(item => collections.includes(item.collection))
@@ -349,7 +349,14 @@ function buildSimpleMongoQuery(
   if (!ranked.length || (ranked.length > 1 && ranked[0].score === ranked[1].score)) return null;
 
   const selected = ranked[0].item;
-  const wantsAvailability = /\b(available|availability|active|enabled|in stock)\b/.test(normalized);
+  const selectedWords = normalizeWords(selected.collection);
+  const asksForSelectedCollection = selectedWords.some(word => {
+    const singular = word.endsWith("s") ? word.slice(0, -1) : word;
+    return words.has(word) || words.has(singular);
+  });
+  const isCount = explicitCount || (/total/.test(normalized) && asksForSelectedCollection);
+  const isSum = /(sum|total)/.test(normalized) && !isCount;
+  const wantsAvailability = /available|availability|active|enabled|in stock/.test(normalized);
   const pipeline: import("mongodb").Document[] = [];
   if (wantsAvailability) {
     const booleanAvailabilityField = selected.fields.find(field =>
@@ -404,10 +411,10 @@ type SimpleSqlPlan = { sql: string; summary: string; isCount: boolean; limit: nu
 function buildSimpleSqlQuery(question: string, schema: SqlSchemaRow[], dialect: "postgresql" | "mysql"): SimpleSqlPlan | null {
   const normalized = question.toLowerCase().replace(/[^a-z0-9]+/g, " ").trim();
   const words = new Set(normalized.split(/\s+/).filter(Boolean));
-  const isCount = /\b(how many|count|number of|total number of)\b/.test(normalized);
-  const isSum = /\b(total|sum)\b/.test(normalized) && !isCount;
-  const isList = /\b(show|list|get|find|display|fetch|what are|which)\b/.test(normalized);
-  if (!isCount && !isList && !isSum) return null;
+  const explicitCount = /how many|count|number of|total number of/.test(normalized);
+  const asksTotal = /total|sum/.test(normalized);
+  const isList = /show|list|get|find|display|fetch|what are|which/.test(normalized);
+  if (!explicitCount && !isList && !asksTotal) return null;
   const tables = new Map<string, { columns: Array<{ name: string; type: string }> }>();
   for (const row of schema) {
     if (typeof row.table_name !== "string" || typeof row.column_name !== "string") continue;
@@ -421,7 +428,14 @@ function buildSimpleSqlQuery(question: string, schema: SqlSchemaRow[], dialect: 
   }).filter(table => table.score > 0).sort((a, b) => b.score - a.score);
   if (!ranked.length || (ranked.length > 1 && ranked[0].score === ranked[1].score)) return null;
   const selected = ranked[0];
-  const quote = (identifier: string) => dialect === "mysql" ? "\u0060" + identifier.replace(/\u0060/g, "\u0060\u0060") + "\u0060" : "\"" + identifier.replace(/\"/g, "\"\"") + "\"";
+  const selectedWords = normalizeWords(selected.name);
+  const asksForSelectedTable = selectedWords.some(word => {
+    const singular = word.endsWith("s") ? word.slice(0, -1) : word;
+    return words.has(word) || words.has(singular);
+  });
+  const isCount = explicitCount || (/total/.test(normalized) && asksForSelectedTable);
+  const isSum = /(sum|total)/.test(normalized) && !isCount;
+  const quote = (identifier: string) => dialect === "mysql" ? "`" + identifier.replace(/`/g, "``") + "`" : "\"" + identifier.replace(/\"/g, "\"\"") + "\"";
   const tableName = quote(selected.name);
   const wantsAvailability = /\b(available|availability|active|enabled|in stock)\b/.test(normalized);
   let where = "";
