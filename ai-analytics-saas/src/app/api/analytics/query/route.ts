@@ -67,7 +67,7 @@ export async function POST(request: Request) {
       stage = "parse-mongodb-host";
       const mongoHost = new URL(config.uri).hostname;
       stage = "validate-mongodb-host-dns";
-      await assertSafeExternalHost(mongoHost);
+      await assertSafeExternalHost(mongoHost, { srv: config.uri.startsWith("mongodb+srv://") });
       const mongo = new MongoClient(config.uri, { serverSelectionTimeoutMS: 8000, connectTimeoutMS: 8000 });
       try {
         stage = "connect-external-mongodb";
