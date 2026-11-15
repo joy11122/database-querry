@@ -177,7 +177,7 @@ export function buildAdvancedSqlQuery(question: string, schema: SqlSchemaRowLike
     const orderPk = pickSqlColumn(orders.columns, aliases.id);
     if (!orderPk) return null;
     const joinProduct = products && productPk ? " LEFT JOIN " + qid(products.name) + " p ON p." + qid(productPk.name) + " = i." + qid(itemProductFk.name) : "";
-    const productLabel = products && pickSqlColumn(products.columns, aliases.name) ? "p." + qid(pickSqlColumn(products.columns, aliases.name)!.name) : "i." + qid(productName.name);
+    const productLabel = products && productPk && pickSqlColumn(products.columns, aliases.name) ? "p." + qid(pickSqlColumn(products.columns, aliases.name)!.name) : "i." + qid(productName.name);
     const revenue = itemPrice ? ", SUM(i." + qid(itemPrice.name) + " * i." + qid(itemQty.name) + ") AS revenue" : "";
     return { sql: "SELECT i." + qid(itemProductFk.name) + " AS product_id, " + productLabel + " AS product_name, SUM(i." + qid(itemQty.name) + ") AS units_sold" + revenue + " FROM " + qid(items.name) + " i JOIN " + qid(orders.name) + " o ON o." + qid(orderPk.name) + " = i." + qid(orderFk.name) + joinProduct + " GROUP BY i." + qid(itemProductFk.name) + ", " + productLabel + " ORDER BY units_sold DESC LIMIT 5", summary: "Top five products ranked by total units sold." };
   }
