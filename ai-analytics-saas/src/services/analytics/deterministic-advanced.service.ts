@@ -74,7 +74,7 @@ export function buildAdvancedMongoQuery(question: string, schema: MongoCollectio
     const customerPk = pickField(customers.fields, aliases.id);
     const orderCustomer = pickField(orders.fields, aliases.customerId);
     const orderDate = pickField(orders.fields, aliases.date);
-    if (!customerPk || !orderCustomer || !orderDate) return null;
+    if (!customerPk || !orderCustomer || !orderDate || !orderDate.types.includes("date")) return null;
     return {
       collection: customers.collection,
       pipeline: [
@@ -115,9 +115,12 @@ export function buildAdvancedMongoQuery(question: string, schema: MongoCollectio
     if (!orderItems) return null;
     const productFk = pickField(orderItems.fields, aliases.productId);
     const quantity = pickField(orderItems.fields, aliases.quantity, true);
+    const itemPrice = pickField(orderItems.fields, aliases.price, true);
     const productPk = products && pickField(products.fields, aliases.id);
     if (!productFk) return null;
-    const pipeline: Document[] = [{ $group: { _id: "$" + productFk.name, unitsSold: { $sum: quantity ? "$" + quantity.name : 1 } } }, { $sort: { unitsSold: -1 } }, { $limit: 5 }];
+    const group: Document = { _id: "$" + productFk.name, unitsSold: { $sum: quantity ? "$" + quantity.name : 1 } };
+    if (itemPrice && quantity) group.revenue = { $sum: { $multiply: ["$" + itemPrice.name, "$" + quantity.name] } };
+    const pipeline: Document[] = [{ $group: group }, { $sort: { unitsSold: -1 } }, { $limit: 5 }];
     if (products && productPk) pipeline.push({ $lookup: { from: products.collection, localField: "_id", foreignField: productPk.name, as: "product" } }, { $unwind: { path: "$product", preserveNullAndEmptyArrays: true } });
     return { collection: orderItems.collection, pipeline, summary: "Top five products ranked by units sold from the order-items collection." };
   }
