@@ -2,25 +2,39 @@ import { MongoClient, type MongoClientOptions } from "mongodb";
 import { env } from "@/config/env";
 
 const uri = env.MONGODB_URI;
-if (!uri) {
-  // Fail at use-time with a clear message instead of breaking unrelated build steps.
-}
 
-const options: MongoClientOptions = {};
-let clientPromise: Promise<MongoClient>;
+const options: MongoClientOptions = {
+  maxPoolSize: 10,
+  minPoolSize: 0,
+  retryReads: true,
+};
 
 declare global {
   // eslint-disable-next-line no-var
   var _authMongoClientPromise: Promise<MongoClient> | undefined;
 }
 
-if (!uri) {
-  clientPromise = Promise.reject(new Error("MONGODB_URI is not configured"));
-} else if (process.env.NODE_ENV === "development") {
-  global._authMongoClientPromise ??= new MongoClient(uri, options).connect();
-  clientPromise = global._authMongoClientPromise;
-} else {
-  clientPromise = new MongoClient(uri, options).connect();
+function createClientPromise(): Promise<MongoClient> {
+  if (!uri) {
+    return Promise.reject(new Error("MONGODB_URI is not configured"));
+  }
+
+  return new MongoClient(uri, options).connect();
 }
+
+// Reuse one MongoClient connection pool per warm serverless instance.
+// This avoids opening a new pool for every module initialization in production.
+const clientPromise =
+  global._authMongoClientPromise ??
+  (global._authMongoClientPromise = createClientPromise());
+
+// Mark the rejection as observed to prevent an unhandled-rejection warning
+// during module initialization. The original promise remains rejected for
+// Auth.js to receive and report through its adapter error handling.
+void clientPromise.catch(() => {
+  if (global._authMongoClientPromise === clientPromise) {
+    global._authMongoClientPromise = undefined;
+  }
+});
 
 export const authMongoClientPromise = clientPromise;
